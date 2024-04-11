@@ -1185,6 +1185,17 @@
 <history_waccm waccm_phys="1"> .true.   </history_waccm>
 <history_clubb>      .false.   </history_clubb>
 
+
+<!-- Defaults for water isotopes (water_tracer_nl)                      -->
+
+<wtrc_citer>1</wtrc_citer>
+<wtrc_niter>1</wtrc_niter>
+<wtrc_add_cvprecip>.true.</wtrc_add_cvprecip>
+
+<wtrc_add_stprecip                 >.true. </wtrc_add_stprecip>
+<wtrc_add_stprecip microphys="mg2" >.false.</wtrc_add_stprecip>
+
+
 <!-- BSINGH - ndrop.F90 "repeated g1 equation" bug fix flag -->
 <fix_g1_err_ndrop>             .false.  </fix_g1_err_ndrop>
 

@@ -4148,6 +4148,210 @@ Use spectral scaling in the radiation heating
 Default: false
 </entry>
 
+<!-- Water Tracers / Isotopes -->
+
+<entry id="water_tracer_model" type="char*32" category="water_tracers"
+       group="water_tracer_nl" valid_values="" >
+The name of the water_tracer model. This controls the water types and species
+that are used in the model. When set to none, no water tracers are
+Default: Set by configure
+</entry>
+
+<entry id="wtrc_names" type="char*8(700)"  category="water_tracers"
+       group="water_tracer_nl" valid_values="" >
+A list of the names of the constituents that will be created for the
+water tracers. The names must be 5 characters or less and can not duplicate
+any existing constituent names or history fields. This variable is set
+in build namelist based upon the settings for the isotope_model.
+Default: Set by build-namelist
+</entry>
+
+<entry id="wtrc_type_names" type="char*16(700)"  category="water_tracers"
+       group="water_tracer_nl" valid_values="VAPOR,LIQUID,ICE,RAINC,SNOWC,RAINS,SNOWS" >
+A list of the names of the isotopic species for each of the water
+tracer defined in wtrc_names. These names must match the wt_name values
+in water_types.F90. This variable is set in build namelist based
+upon the settings for the isotope_model.
+Default: Set by build-namelist
+</entry>
+
+<entry id="wtrc_species_names" type="char*16(700)"  category="water_tracers"
+       group="water_tracer_nl" valid_values="H2O,HD16O,H218O,H216O" >
+A list of the names of the isotopic species for each of the water
+tracer defined in wtrc_names. These names must match the spnam values
+in water_isotopes.F90 . This variable is set in build namelist based
+upon the settings for the isotope_model.
+Default: Set by build-namelist
+</entry>
+
+<entry id="wtrc_tag_names" type="char*16(700)"  category="water_tracers"
+       group="water_tracer_nl" valid_values="" >
+A list of the constituents specified in wtrc_names that represent a tagging
+of water not an isotopic fractionation. In is assumed that the tagged water
+is not part of the total water budget.
+Default: Set by build-namelist
+</entry>
+
+<entry id="wtrc_srfvap_names" type="char*16(700)"  category="water_tracers"
+       group="water_tracer_nl" valid_values="" >
+A list of the names of the tracer vapor fields that are coupled to the
+surface models.
+Default: Set by build-namelist
+</entry>
+
+<entry id="wtrc_srfpcp_names" type="char*16(700)"  category="water_tracers"
+       group="water_tracer_nl" valid_values="" >
+A list of the names of the tracer precipitation fields that are coupled to the
+surface models.
+Default: Set by build-namelist
+</entry>
+
+<entry id="trace_water" type="logical" category="water_tracers"
+       group="water_tracer_nl" valid_values="" >
+When true, indicates that additional water vapor tracers have been
+enabled. These tracers can be used for water isotopes and/or tagged
+water.
+Default: Set by build-namelist
+</entry>
+
+
+<entry id="wisotope" type="logical" category="water_tracers"
+       group="water_tracer_nl" valid_values="" >
+When true, indicates that isotopic fractionation should be applied to
+tracers for water isotopes. When false a value of 1 used used for the
+fractionation ratio which can be useful for debugging mass consevation
+of the isotopes.
+Default: Set by build-namelist
+</entry>
+
+<entry id="wtrc_alpha_kinetic" type="logical" category="water_tracers"
+       group="water_tracer_nl" valid_values="" >
+When true, indicates that kinetic effects should be included in the
+fractionation calculation. When false, equilibrium fractionation will
+be used.
+Default: False
+</entry>
+
+<entry id="wtrc_lh2oadj" type="logical" category="water_tracers"
+       group="water_tracer_nl" valid_values="" >
+When true indicates that rescaling should be provided to ensure that the
+total mass of isotopes matches the mass of the parent constituent (e.g.
+that all of the water vapor isotopes add up to Q). 
+REMOVE
+Default: False
+</entry>
+
+<entry id="wtrc_add_cvprecip" type="logical" category="water_tracers"
+       group="water_tracer_nl" valid_values="" >
+Indicates that QRAIN-CV and QSNOW-CV should be added by water_tracers, since
+they are not prognostic variables in the microphysics. If false, then it is
+expected that the microphysics will supply this state variable. 
+ALWAYS ON
+Default: False
+</entry>
+
+<entry id="wtrc_add_stprecip" type="logical" category="water_tracers"
+       group="water_tracer_nl" valid_values="" >
+Indicates that QRAIN-ST and QSNOW-ST should be added by water_tracers, since
+they are not prognostic variables in the microphysics. If false, then it is
+expected that the microphysics will supply this state variable. 
+ALWAYS ON
+Default: False
+</entry>
+
+<entry id="wtrc_check_total_h2o" type="logical" category="water_tracers"
+       group="water_tracer_nl" valid_values="" >
+Indicates that total mass checks should be performed when process are applied.
+Default: False
+</entry>
+
+<entry id="wtrc_check_show_types" type="logical" category="water_tracers"
+       group="water_tracer_nl" valid_values="" >
+When check_total finds a mass conservation error, show extra information
+about the total mass in each water type. This can help to identify the
+source of the conservation error.
+Default: False
+</entry>
+
+<entry id="wtrc_detrain_in_macrop" type="logical" category="water_tracers"
+       group="water_tracer_nl" valid_values="" >
+Specifies that detrainment of isotopes should be done in the macrophysics rather
+than in the convection. This will not get the fractionation right, but should help
+conserve mass if running the model with isotopes in the convective parameterizations.
+ALWAYS ON
+Default: False
+</entry>
+
+<entry id="wtrc_warn_only" type="logical" category="water_tracers"
+       group="water_tracer_nl" valid_values="" >
+Indicates whether to stop the run when a mass conservation check is detected
+(false) or whether just a diagnostic message should be output to the log (true).
+Default: True
+</entry>
+
+<entry id="wtrc_niter" type="integer" category="water_tracers"
+       group="water_tracer_nl" valid_values="" >
+The number of iterations to use when solving for the effect of processes on
+isotopes or tagged water species.
+NOT CURRENTLY USED
+Default: 10
+</entry>
+
+<entry id="wtrc_citer" type="integer" category="water_tracers"
+       group="water_tracer_nl" valid_values="" >
+The number of iterations to use in the Differential Isotope Cloud Model
+(DICM), which is used in the convective schemes.
+NOT LONGER USED -- REMOVE
+Default: 20
+</entry>
+
+<entry id="wtrc_lzmlin" type="logical" category="water_tracers"
+       group="water_tracer_nl" valid_values="" >
+Indicates if linear interpolation will be used in the ZM deep convective
+scheme during the water tracer calculations.  If false, then interpolation
+is logarithmic.
+DO NOT USE REMOVE
+Default: True
+</entry>
+
+<entry id="wtrc_use_ice_supsat" type="logical" category="water_tracers"
+       group="water_tracer_nl" valid_values="">
+Indicates if the model-derived supersaturation with respect to ice should
+be used to calculate the isotopic fractionation during deposition, instead
+of the deafult, temperature-dependent ice superaturation parameterization
+values.
+Default: False
+</entry>
+
+<entry id="wtrc_qchkmin" type="real"  category="water_tracers"
+       group="water_tracer_nl" valid_values="">
+The relative error threshold that will trigger a mass conservation error from the water
+isotopes.
+Default: 1e-14
+</entry>
+
+<entry id="wtrc_qmin" type="real"  category="water_tracers"
+       group="water_tracer_nl" valid_values="">
+The minimum mixing ratio supported for water constituents. The prevents small numbers and
+negative values from being introduced by the numerics. It should match the value of
+qsmall in cldwat2m_micro.
+Default: 1e-18
+</entry>
+
+<entry id="wtrc_fixed_alpha" type="real(100)"  category="water_tracers"
+       group="water_tracer_nl" valid_values="">
+The fraction factor to be used when wisotope is false. This is used for
+test pruposes.
+Default: 1.0
+</entry>
+
+<entry id="wtrc_fixed_rstd" type="real(100)"  category="water_tracers"
+       group="water_tracer_nl" valid_values="">
+The isotope ratio to be used when wisotope is false. This is used for
+test pruposes.
+Default: 1.0
+</entry>
+
 <!-- MMF -->
 <entry id="use_MMF" type="logical"  category="conv"
        group="phys_ctl_nl" valid_values="" >
@@ -6213,6 +6417,10 @@ Default: FALSE
 <entry id="cplflds_custom" type="char*80"  category="driver"
        group="seq_cplflds_userspec" valid_values="" >
 Default: 
+</entry>
+<entry id="flds_wiso" type="logical"  category="driver"
+       group="seq_cplflds_inparam" valid_values="" >
+Default: FALSE
 </entry>
 
 <!-- Task/Thread layouts -->

@@ -161,6 +161,10 @@ OPTIONS
                         The user does not need to set this if one of the waccm chemistry options
                         is chosen.
      -waccmx            Build EAM/WACCM with WACCM upper Thermosphere/Ionosphere extended package
+     -water_tracer <name> Build CAM with specified water tracer (tag only for now) package
+                        [ none | h2o ].
+                        Default: none
+     -water_tag_num <n> Number of water tags that will be simulated in this EAM build.
 
 
   Options relevent to SCAM mode:
@@ -365,6 +369,8 @@ GetOptions(
     "waccm_phys"                => \$opts{'waccm_phys'},
     "offline_dyn"               => \$opts{'offline_dyn'},
     "waccmx"                    => \$opts{'waccmx'},
+    "water_tracer=s"            => \$opts{'water_tracer'},
+    "water_tag_num=s"           => \$opts{'water_tag_num'},
     "cosp_libdir=s"             => \$opts{'cosp_libdir'},
     "esmf_libdir=s"             => \$opts{'esmf_libdir'},
     "mct_libdir=s"              => \$opts{'mct_libdir'},
@@ -812,6 +818,41 @@ my $offline_dyn = $cfg_ref->get('offline_dyn');
 if ( ($offline_dyn) and ($dyn_pkg ne 'fv') ) {
     die <<"EOF";
 ** ERROR: Offline driver only applicable to the FV dycore.
+EOF
+}
+
+#-----------------------------------------------------------------------------------------------
+# Water Tracer Package
+# Next set the default water tracer package.
+my $water_tracer_pkg = 'none';
+
+# Allow the user to override the default water_tracer via the commandline.
+if (defined $opts{'water_tracer'}) {
+    $water_tracer_pkg = lc($opts{'water_tracer'});
+
+    if ($print>=2 and ($water_tracer_pkg ne 'none')) { print "Using $water_tracer_pkg water tracer (isotope or tag) model.$eol"; }
+}
+
+$cfg_ref->set('water_tracer', $water_tracer_pkg);
+
+#----------------------------------------------------------------------------------------------
+# Water tags
+
+# Allow the user to override the default number of water tags via the commandline:
+if (defined $opts{'water_tag_num'}) {
+    $cfg_ref->set('water_tag_num', $opts{'water_tag_num'});
+}
+
+#Pull out water_tag_num variable from configure object:
+my  $tags_water = $cfg_ref->get('water_tag_num');
+
+#Print number of water tags to file/screen:
+if ($print>=2) { print "Number of user requested water tags: $tags_water$eol"; }
+
+#Kill configuration if water tracers are off but water tags are on:
+if (($water_tracer_pkg eq 'none') and (defined $opts{'water_tag_num'})) {
+    die <<"EOF";
+** ERROR:  Water tags have been specified, but without a water tracer model (-water_tracer).
 EOF
 }
 
@@ -1386,6 +1427,36 @@ if ($rain_evap_to_coarse_aero == 1 && ($chem_pkg =~ '_mam3' || $chem_pkg =~ '_ma
     $chem_cppdefs = "$chem_cppdefs  -DRAIN_EVAP_TO_COARSE_AERO "
 }
 
+
+
+#Water Tracers
+my $water_tracer_nadv = 0;
+my $set_wtrc_max_cnst = 0;
+
+if ($water_tracer_pkg ne 'none') {
+    if ($water_tracer_pkg eq 'h2o') {
+        $water_tracer_nadv += 7;
+        $set_wtrc_max_cnst = 7;
+    }
+
+    # Account for the need to add prognostic rain and snow to
+    # the non-isotopic water.  This will allow looping over all
+    # 7 (pwtype) types whether they are isotopic or non-isotopic water
+    # NOTE: If microphysics = MG2, then only add convective precipitation. -JN
+    if ($microphys_pkg eq 'mg2') {
+        $water_tracer_nadv +=2;
+    } else {
+        $water_tracer_nadv +=4;
+    }
+
+    # Add water tags to tracer number:
+    if(defined $opts{'water_tag_num'}) {
+        $water_tracer_nadv += $tags_water*7;
+        $set_wtrc_max_cnst += $tags_water*7;
+    }
+
+}
+
 #-----------------------------------------------------------------------------------------------
 # Number of advected constituents
 my $nadv;
@@ -1423,6 +1494,11 @@ else {
         if ($clubb_do_adv) {
             $nadv += 9;
                 if ($print>=2) { print "Advected constituents added by $microphys_pkg microphysics: 8$eol"; }
+        }
+
+        if ($water_tracer_pkg ne 'none') {
+            $nadv += $water_tracer_nadv;
+            if ($print>=2) { print "Advected constituents added by $water_tracer_pkg water tracers: $water_tracer_nadv$eol"; }
         }
 
         # co2_cycle
@@ -1773,6 +1849,9 @@ $cfg_cppdefs .= " -DPLON=$nlon -DPLAT=$nlat";
 if (!$ccsm_seq){
     $cfg_cppdefs .= " -DNUM_COMP_INST_ATM=1 -DNUM_COMP_INST_LND=1 -DNUM_COMP_INST_OCN=1 -DNUM_COMP_INST_ICE=1 -DNUM_COMP_INST_GLC=1 -DNUM_COMP_INST_ROF=1 -DNUM_COMP_INST_WAV=1";
 }
+
+# Parameter for water isotopes - always set, though will be 0 when water isotopes is not enabled
+$cfg_cppdefs .= " -DSET_WTRC_MAX_CNST=$set_wtrc_max_cnst";
 
 # Resolution parameters for spectral element cubed sphere grids.
 # F2003 definition turns on standard-conforming method of causing edge

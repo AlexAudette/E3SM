@@ -488,6 +488,14 @@ add_default($nl, 'flds_co2b',      'val'=>'.false.');
 add_default($nl, 'flds_co2c',      'val'=>'.false.');
 add_default($nl, 'cplflds_custom', 'val'=>'');
 
+my $water_tracer = $cfg->get('water_tracer');
+if ($water_tracer ne 'none') {
+ add_default($nl, 'flds_wiso',    'val'=>'.true.');
+ }
+else {
+ add_default($nl, 'flds_wiso',    'val'=>'.false.');
+}
+
 ############################
 # namelist group: ccsm_pes #
 ############################
@@ -713,6 +721,8 @@ my $rad_prog_sulf  = (($prog_species =~ "SO4"  or $aero_chem or $chem =~ "super_
 my $rad_prog_dust  = (($prog_species =~ "DST"  or $aero_chem) and !($chem_rad_passive));
 my $rad_prog_sslt  = (($prog_species =~ "SSLT" or $aero_chem) and !($chem_rad_passive));
 my $rad_prog_ozone = (($chem =~ "mozart" or $chem =~ "trop_strat" or $chem =~ "super_fast_llnl" or $chem =~ "superfast" or $chem =~ "linoz") and !($chem_rad_passive));
+
+my $water_tracer = $cfg->get('water_tracer');
 
 # Check for eruptive volcano emissions.  These will be radiatively active by default, but
 # only if using MAM and the rrtmg package  (cam5 physics)
@@ -3808,6 +3818,176 @@ add_default($nl, 'molec_diff_bot_press');
 
 # Cloud sedimentation
 add_default($nl, 'cldsed_ice_stokes_fac');
+
+# Water Tracers
+# Set water tracer model by value from configure
+my $var = 'water_tracer_model';
+add_default($nl, 'water_tracer_model', 'val'=>$water_tracer );
+
+print "$water_tracer \n" ;
+
+# Initialize water tracer variables:
+my $wtrc_name = "";
+my $wtrc_spec = "";
+my $wtrc_type = "";
+my $wtrc_srfpcp = "";
+my @isotopes = ();
+
+if ($water_tracer ne 'none') {
+
+  #Create water isotope species array:
+  if ($water_tracer eq 'all_stable_wiso') {
+    @isotopes = ("h2o", "h216o", "hdo", "h218o", "h217o");
+  }
+  elsif ($water_tracer eq 'all_wiso') {
+    @isotopes = ("h2o", "h216o", "hdo", "h218o", "h217o", "hto");
+  }
+  else {
+    @isotopes = split /_/, $water_tracer;
+  }
+
+  my $cnt_iso = 0;
+
+  add_default($nl, 'trace_water',        'val'=>'.true.');
+  add_default($nl, 'wtrc_niter');
+  add_default($nl, 'wtrc_citer');
+
+  add_default($nl, 'wtrc_add_cvprecip');
+  add_default($nl, 'wtrc_add_stprecip');
+  add_default($nl, 'wisotope',               'val'=>'.true.');
+  add_default($nl, 'flds_wiso',              'val'=>'.true.');
+
+  #Assume user is using standard isotopic supersaturation parameterization.
+  add_default($nl, 'wtrc_use_ice_supsat',  'val'=>'.false.');
+
+  # For now while testing.
+  add_default($nl, 'wtrc_check_total_h2o',   'val'=>'.true.');
+  add_default($nl, 'wtrc_lzmlin',            'val'=>'.true.');
+
+  # For now while isotopes are not in the convective parameterization.
+  add_default($nl, 'wtrc_detrain_in_macrop', 'val'=>'.true.');
+
+  my $wtrc_srfvap_names_list = "";
+
+  foreach my $isotope (@isotopes) {
+
+     print "======= $isotope \n";
+     # H2O
+     #
+     # This configuration is mostly useful as a debugging tool, since with
+     # wisotope set to false, h2o should track the prognostic bulk water
+     # vapor fields.
+     if ($isotope eq 'h2o') {
+
+       $cnt_iso += 1;
+       if ($cnt_iso != 1) {
+          die "ERROR: When specifying water isotopes, h2o must be in the first position, but specified $water_tracer \n";
+       }
+       $wtrc_name              .= "'H2OV','H2OL','H2OI','H2OR','H2OS','H2Or','H2Os'";
+       $wtrc_spec              .= "'H2O','H2O','H2O','H2O','H2O','H2O','H2O'";
+       $wtrc_type              .= "'VAPOR','LIQUID','ICE','RAINS','SNOWS','RAINC','SNOWC'";
+       $wtrc_srfpcp            .= "'H2OR','H2Or','H2OS','H2Os'";
+       $wtrc_srfvap_names_list .= "'H2OV',";
+
+
+       # For now while testing.
+       add_default($nl, 'wtrc_check_show_types',  'val'=>'.true.');
+
+     # HDO
+     } elsif ($isotope eq 'hdo') {
+
+       $cnt_iso += 1;
+       if ($cnt_iso == 2) {
+          die "ERROR: When specifying water isotopes, h216o must be in the second position, but specified $water_tracer \n";
+       }
+       add_default($nl, 'wtrc_alpha_kinetic',   'val'=>'.true.');
+       $wtrc_name              .= "'HDOV','HDOL','HDOI','HDOR','HDOS','HDOr','HDOs'";
+       $wtrc_spec              .= "'HD16O','HD16O','HD16O','HD16O','HD16O','HD16O','HD16O'";
+       $wtrc_type              .= "'VAPOR','LIQUID','ICE','RAINS','SNOWS','RAINC','SNOWC'";
+       $wtrc_srfpcp            .= "'HDOR','HDOr','HDOS','HDOs'";
+       $wtrc_srfvap_names_list .= "'HDOV',";
+
+     # H218O
+     } elsif ($isotope eq 'h218o') {
+
+       $cnt_iso += 1;
+       if ($cnt_iso == 2) {
+          die "ERROR: When specifying water isotopes, h216o must be in the second position, but specified $water_tracer \n";
+       }
+       add_default($nl, 'wtrc_alpha_kinetic',   'val'=>'.true.');
+
+       $wtrc_name              .= "'H218OV','H218OL','H218OI','H218OR','H218OS','H218Or','H218Os'";
+       $wtrc_spec              .= "'H218O','H218O','H218O','H218O','H218O','H218O','H218O'";
+       $wtrc_type              .= "'VAPOR','LIQUID','ICE','RAINS','SNOWS','RAINC','SNOWC'";
+       $wtrc_srfpcp            .= "'H218OR','H218Or','H218OS','H218Os'";
+       $wtrc_srfvap_names_list .= "'H218OV',";
+
+     # H216O
+     } elsif ($isotope eq 'h216o') {
+
+       $cnt_iso += 1;
+       if ($cnt_iso != 2) {
+          die "ERROR: When specifying water isotopes, h216o must be in the second position, but specified $water_tracer \n";
+       }
+       add_default($nl, 'wtrc_alpha_kinetic',   'val'=>'.true.');
+
+       $wtrc_name              .= "'H216OV','H216OL','H216OI','H216OR','H216OS','H216Or','H216Os',";
+       $wtrc_spec              .= "'H216O','H216O','H216O','H216O','H216O','H216O','H216O',";
+       $wtrc_type              .= "'VAPOR','LIQUID','ICE','RAINS','SNOWS','RAINC','SNOWC',";
+       $wtrc_srfpcp            .= "'H216OR','H216Or','H216OS','H216Os',";
+       $wtrc_srfvap_names_list .= "'H216OV',";
+
+     # H217O
+     } elsif ($isotope eq 'h217o') {
+
+       $cnt_iso += 1;
+       if ($cnt_iso == 2) {
+          die "ERROR: When specifying water isotopes, h216o must be in the second position, but specified $water_tracer \n";
+       }
+       add_default($nl, 'wtrc_alpha_kinetic',   'val'=>'.true.');
+
+       $wtrc_name              .= "'H217OV','H217OL','H217OI','H217OR','H217OS','H217Or','H217Os',";
+       $wtrc_spec              .= "'H217O','H217O','H217O','H217O','H217O','H217O','H217O',";
+       $wtrc_type              .= "'VAPOR','LIQUID','ICE','RAINS','SNOWS','RAINC','SNOWC',";
+       $wtrc_srfpcp            .= "'H217OR','H217Or','H217OS','H217Os',";
+       $wtrc_srfvap_names_list .= "'H217OV',";
+
+     # HTO
+     } elsif ($isotope eq 'hto') {
+
+       $cnt_iso += 1;
+       if ($cnt_iso == 2) {
+          die "ERROR: When specifying water isotopes, h216o must be in the second position, but specified $water_tracer \n";
+       }
+       add_default($nl, 'wtrc_alpha_kinetic',   'val'=>'.true.');
+       $wtrc_name              .= "'HTOV','HTOL','HTOI','HTOR','HTOS','HTOr','HTOs'";
+       $wtrc_spec              .= "'HT16O','HT16O','HT16O','HT16O','HT16O','HT16O','HT16O'";
+       $wtrc_type              .= "'VAPOR','LIQUID','ICE','RAINS','SNOWS','RAINC','SNOWC'";
+       $wtrc_srfpcp            .= "'HTOR','HTOr','HTOS','HTOs'";
+       $wtrc_srfvap_names_list .= "'HTOV',";
+
+     } else {
+       die "$ProgName - ERROR: water_tracer type ($isotope) in config_cache file is NOT known by build-namelist . \n";
+     }
+  }
+  # Strip off last comma from the list
+  $wtrc_srfvap_names_list = substr($wtrc_srfvap_names_list, 0, -1);
+  add_default($nl, 'wtrc_srfvap_names', 'val'=>$wtrc_srfvap_names_list);
+  print "======= $wtrc_srfvap_names_list \n";
+
+  # Tracer names, no more than 5 characters per name
+  add_default($nl, 'wtrc_names',   'val'=>$wtrc_name);
+
+  # Tracer isotopic species (see water_isotopes.F90)
+  add_default($nl, 'wtrc_species_names',  'val'=>$wtrc_spec);
+
+  # Tracer types (see water_types.F90)
+  add_default($nl, 'wtrc_type_names',    'val'=>$wtrc_type);
+
+  # Tracers that precipitate to surface (see water_types.F90)
+  add_default($nl, 'wtrc_srfpcp_names', 'val'=>$wtrc_srfpcp);
+
+}
 
 # Dust emissions tuning factor
 # If dust is prognostic ==> supply the tuning factor
