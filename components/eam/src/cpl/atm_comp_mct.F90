@@ -401,7 +401,7 @@ CONTAINS
 
        call seq_timemgr_EClockGetData(EClock,curr_ymd=CurrentYMD, StepNo=StepNo, dtime=DTime_Sync )
        if (StepNo == 0) then
-          call atm_import( x2a_a%rattr, cam_in )
+          call atm_import( x2a_a%rattr, cam_in, cam_out )
 
           call t_startf('CAM_run1')
           call cam_run1 ( cam_in, cam_out ) 
@@ -416,7 +416,7 @@ CONTAINS
 
           ! Sent .true. as an optional argument so that restart_init is set to .true.  in atm_import
 	      ! This will ensure BFB restarts whenever qneg4 updates fluxes on the restart time step
-          call atm_import( x2a_a%rattr, cam_in, .true. )
+          call atm_import( x2a_a%rattr, cam_in, cam_out, .true. )
 
           call t_startf('cam_run1')
           call cam_run1 ( cam_in, cam_out ) 
@@ -540,7 +540,7 @@ CONTAINS
     ! Map input from mct to cam data structure
 
     call t_startf ('CAM_import')
-    call atm_import( x2a_a%rattr, cam_in )
+    call atm_import( x2a_a%rattr, cam_in , cam_out)
     call t_stopf  ('CAM_import')
     
     ! Cycle over all time steps in the atm coupling interval

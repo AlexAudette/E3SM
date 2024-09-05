@@ -260,7 +260,13 @@ end subroutine uwshcu_readnl
                                  cufrc_inv, qcu_inv    , qlu_inv       , qiu_inv   ,             &   
                                  cbmf     , qc_inv     , rliq          ,                         &
                                  cnt_inv  , cnb_inv    , lchnk         , dpdry0_inv,             &
-                                 fer_out  , fdr_out                                              )  
+                                 fer_out  , fdr_out ,&
+                                 wtprec         , wtsnow    , wtqc_inv    )
+
+    !Water tracer modules:
+    use water_tracer_vars, only: wtrc_nwset, wtrc_iatype
+    use water_types,       only: iwtvap,iwtliq,iwtice    
+
 
     implicit none
     integer , intent(in)    :: lchnk     
@@ -321,6 +327,13 @@ end subroutine uwshcu_readnl
     real(r8), intent(out)   :: fer_out(mix,mkx)         !  Fractional lateral entrainment rate [ 1/Pa ]  !RCE
     real(r8), intent(out)   :: fdr_out(mix,mkx)         !  Fractional lateral detrainment rate [ 1/Pa ]  !RCE
 
+    !Water tracers:
+    !*************
+    real(r8), intent(out)   :: wtprec(mix,ncnst)        !  Water tracer surface precipitation [ m/s ]
+    real(r8), intent(out)   :: wtsnow(mix,ncnst)        !  Water tracer surface snow [ m/s ]
+    real(r8), intent(out)   :: wtqc_inv(mix,mkx,ncnst)  !  Water tracer detrained condensate [ kg/kg/s ] 
+    !*************
+
     real(r8)                :: ps0(mix,0:mkx)           !  Environmental pressure at the interfaces [ Pa ]
     real(r8)                :: zs0(mix,0:mkx)           !  Environmental height at the interfaces   [ m ]
     real(r8)                :: p0(mix,mkx)              !  Environmental pressure at the layer mid-point [ Pa ]
@@ -370,6 +383,8 @@ end subroutine uwshcu_readnl
     integer                 :: k_inv                    !  Vertical index for incoming fields [ no ]
     integer                 :: m                        !  Tracer index [ no ]
 
+    real(r8)                :: wtqc(mix,mkx,ncnst)      !  Water tracer detrained condensate [ kg/kg/s ]
+
     do k = 1, mkx
        k_inv               = mkx + 1 - k
        p0(:iend,k)         = p0_inv(:iend,k_inv)
@@ -410,7 +425,9 @@ end subroutine uwshcu_readnl
                          cufrc, qcu    , qlu       , qiu   ,        &
                          cbmf , qc     , rliq      ,                &
                          cnt  , cnb    , lchnk     , dpdry0,        &
-                         fer_out, fdr_out                           )  
+                         fer_out, fdr_out   ,                &
+                         wtprec        ,wtsnow     , wtqc )
+! WT-block ends                         
 
     ! Reverse cloud top/base interface indices
 
@@ -444,6 +461,8 @@ end subroutine uwshcu_readnl
        qc_inv(:iend,k_inv)           = qc(:iend,k)      
        do m = 1, ncnst
           trten_inv(:iend,k_inv,m)   = trten(:iend,k,m) 
+          wtqc_inv(:iend,k_inv,m)    = wtqc(:iend,k,m) 
+! WT-block ends          
        enddo
 
     enddo
@@ -463,7 +482,9 @@ end subroutine uwshcu_readnl
                              cufrc_out, qcu_out   , qlu_out      , qiu_out  ,             &
                              cbmf_out , qc_out    , rliq_out     ,                        &
                              cnt_out  , cnb_out   , lchnk        , dpdry0_in ,            &
-                             fer_out  , fdr_out                                           )  
+                             fer_out  , fdr_out ,                                         &
+                             wtprec_out           ,wtsnow_out    , wtqc_out ) 
+! WT-block ends                             
 
     ! ------------------------------------------------------------ !
     !                                                              !  
@@ -485,7 +506,14 @@ end subroutine uwshcu_readnl
     use cam_history,     only : outfld
     use constituents,    only : qmin, cnst_get_type_byind, cnst_get_ind
     use wv_saturation,   only : findsp_vc
-
+        !Water tracers:
+    use water_tracer_vars, only : trace_water, wisotope, wtrc_iatype, wtrc_nwset, &
+                                  iwspec
+    use water_tracers,     only : wtrc_ratio, wtrc_get_alpha, wtrc_liqvap_equil, &
+                                  wtrc_is_wtrc, wtrc_get_rstd!, wtrc_equil_time
+    use water_types,       only : iwtvap, iwtliq, iwtice
+    ! use water_isotopes,    only : difrm, dkfac
+    
     implicit none
 
     ! ---------------------- !
@@ -552,6 +580,13 @@ end subroutine uwshcu_readnl
     real(r8), intent(out)   :: cnb_out(mix)                   !  Cumulus base interface index, cnb = krel - 1 [ no ] 
     real(r8), intent(out)   :: fer_out(mix,mkx)               !  Fractional lateral entrainment rate [ 1/Pa ] 
     real(r8), intent(out)   :: fdr_out(mix,mkx)               !  Fractional lateral detrainment rate [ 1/Pa ]
+
+    !Water tracers:
+    !*************
+    real(r8), intent(out)  :: wtqc_out(mix,mkx,ncnst)         ! Tendency of detrained condensate [ kg/kg/s ]
+    real(r8), intent(out)  :: wtprec_out(mix,ncnst)           ! Water tracer precipitation [ m/s ]
+    real(r8), intent(out)  :: wtsnow_out(mix,ncnst)           ! Water tracer snow [ m/s ]
+    !*************
 
     !
     ! Internal Output Variables
@@ -682,6 +717,60 @@ end subroutine uwshcu_readnl
     real(r8)    trflx_u(0:mkx)                                !  Adjustive upward   flux of tracers to prevent negative tracers
     real(r8)    trmin                                         !  Minimum concentration of tracers allowed
     real(r8)    pdelx, dum 
+
+    !Water tracers:
+    !*************
+    !NOTE:  These variables (and subroutine) demonstrate how one can 
+    !       can create arrays that are dimensioned to the total number
+    !       of water tracers/isotopes, instead of the total number
+    !       of constituents, which can be a wasteful use of memory. - JN
+    !NOTE:  Probably only need one detrainment variable. - JN
+    real(r8)    wtflx(0:mkx,wtrc_nwset)                       !  Flux of total water tracer humidity due to convection [ kg/kg * kg/m2/s ]
+    real(r8)    wt0(mkx,wtrc_nwset)                           !  Total water tracer amount pre-convection [ kg/kg/s ]
+    real(r8)    sswt0(mkx,wtrc_nwset)                         !  Linear vertical slope of total water tracer amount [ kg/kg/Pa ]
+    real(r8)    wtdwten(mkx,wtrc_nwset)                       !  Water tracer detraining liquid tendency [ kg/kg/s ]
+    real(r8)    wtditen(mkx,wtrc_nwset)                       !  Water tracer detraining ice tendency    [ kg/kg/s ]
+    real(r8)    wtrpten(mkx,wtrc_nwset)                       !  Water tracer rain tendency [ kg/kg/s ]
+    real(r8)    wtspten(mkx,wtrc_nwset)                       !  Water tracer snow tendency [ kg/kg/s ]
+    real(r8)    wtlten_det(mkx,wtrc_nwset)                    !  Water tracer non-precip liquid detrainment tendency [ kg/kg/s ]
+    real(r8)    wtiten_det(mkx,wtrc_nwset)                    !  Water tracer non-precip frozen detrainment tendency [ kg/kg/s ]
+    real(r8)    wt0_star(mkx,wtrc_nwset,3)                    !  Water tracer state post-tendency (used for corrections) [ kg/kg ]
+    real(r8)    wtqc_liq(mkx,wtrc_nwset)                      !  Water tracer tendency due to liquid detrained 'cloud condensate' [ kg/kg/s ]
+    real(r8)    wtqc_ice(mkx,wtrc_nwset)                      !  Water tracer tendency due to frozen detrained 'cloud condensate' [ kg/kg/s ]
+    real(r8)    wtqcm_liq(wtrc_nwset)                         !  Water tracer tendency due to liquid detrainment at midlevels [ kg/kg/s ]
+    real(r8)    wtqcm_ice(wtrc_nwset)                         !  Water tracer tendency due to frozen detrainment at midlevels [ kg/kg/s ]
+    real(r8)    wtprec(wtrc_nwset)                            !  Surface water tracer precipitation rate [ m/s ]
+    real(r8)    wtsnow(wtrc_nwset)                            !  Surface water tracer snow rate [ m/s ]
+
+    !Water tracer precipitation evaporation:
+    !NOTE:  wtevp and wtsub may not need to be a function of height. - JN
+    real(r8)    wtflxrn(0:mkx,wtrc_nwset)                     !  water tracer rain flux [ kg/m2/s ]
+    real(r8)    wtflxsn(0:mkx,wtrc_nwset)                     !  water tracer snow flux [ kg/m2/s ]
+    real(r8)    wtevp(mkx,wtrc_nwset)                         !  water tracer rain evaporation [ kg/kg/s ]
+    real(r8)    wtsub(mkx,wtrc_nwset)                         !  water tracer snow sublimation [ kg/kg/s ]
+    real(r8)    phi                                           !  phi value from Bony et. al., 2008
+    real(r8)    Rr                                            !  Water tracer rain ratio [ unitless ]
+    real(r8)    Rv                                            !  Water tracer vapor ratio [ unitless ]
+    real(r8)    Rs                                            !  Water tracer snow ratio [ unitless ]
+    real(r8)    Re                                            !  Water tracer evaporation ratio [ unitless ]
+    real(r8)    alpliq                                        !  Equilibrum fractionation factor over liquid
+    real(r8)    alpkin                                        !  Kinetic fractionation factor (vapor/liquid)
+    real(r8)    heff                                          !  "Effective" relative humidity (Bony et. al., 2008)
+    real(r8)    ivtmp                                         !  Temporary storage variable for water tracer vapor
+    real(r8)    iltmp                                         !  Temporary storage variable for water tracer rain
+    real(r8)    vtmp                                          !  Temporary storage variable for standard vapor
+    real(r8)    ltmp                                          !  Temporary storage variable for standard rain
+    real(r8)    dliqiso                                       !  Tendency due to isotopic liquid/vapor equilibration.
+    real(r8)    wtsnwmlt                                      !  Fraction of water tracer snow that melts.
+    real(r8)    Rstw                                          !  Isotopic rain ratio post-evaporation.
+    real(r8)    gam                                           !  Stewart, 1975 parameter [ unitless ]
+    real(r8)    bet                                           !  Stewart, 1975 parameter [ unitless ]
+    real(r8)    fr                                            !  Fraction of rain remaining [ unitless ].
+    real(r8)    rain_radius                                   !  raindrop radius [m]
+    real(r8)    fequil                                        !  fraction of rain that has experience equilibration 
+    real(r8)    dz(0:mkx)                                     !  layer thickness [m] 
+    integer     ispec                                         !  water isotope species 
+    !************
     
     !----- Variables used for the calculation of condensation sink associated with compensating subsidence
     !      In the current code, this 'sink' tendency is simply set to be zero.
@@ -706,6 +795,15 @@ end subroutine uwshcu_readnl
     real(r8)    thl_prog, qt_prog                             !  Prognosed 'thl, qt'
                                                               ! by compensating subsidence/upwelling 
 
+       !Water tracers:
+   !*************
+    real(r8)    wttotten(mkx,wtrc_nwset)                      ! Total water tracer tendency
+    real(r8)    wtten_sink_liq(mkx,wtrc_nwset)                ! Tendency of water tracer liquid due to subsidence or upwelling [ kg/kg/s ]
+    real(r8)    wtten_sink_ice(mkx,wtrc_nwset)                ! Tendency of water trace ice due to subsidenc or upwelling [ kg/kg/s ]
+    real(r8)    wtlten_sub(wtrc_nwset)                        ! Tendency of water tracer cloud liquid by sub/up.
+    real(r8)    wtiten_sub(wtrc_nwset)                        ! Tendency of water tracer cloud ice by sub/up.
+   !*************
+    
     !----- Variables describing cumulus updraft
 
     real(r8)    wu(0:mkx)                                     !  Updraft vertical velocity at the interface [ m/s ]
@@ -731,7 +829,13 @@ end subroutine uwshcu_readnl
     real(r8)    vu_emf(0:mkx)                                 !  Penetrative downdraft meridional wind
                                                               ! at entraining interfaces [ m/s ]
     real(r8)    tru_emf(0:mkx,ncnst)                          !  Penetrative Downdraft tracers
-                                                              ! at entraining interfaces [ #, kg/kg ]    
+                                                              ! at entraining interfaces [ #, kg/kg ] 
+    
+       !water tracers:
+   !*************
+    real(r8)   wtu(0:mkx,wtrc_nwset)                          ! Total water tracer humidity in updraft  [ kg/kg ]
+    real(r8)   wtu_emf(0:mkx,wtrc_nwset)                      ! Total water tracer humidity at entrainment interfaces [ kg/kg ]
+   !************  
 
     !----- Variables associated with evaporations of convective 'rain' and 'snow'
 
@@ -800,6 +904,26 @@ end subroutine uwshcu_readnl
     real(r8)    xsrc, xmean, xtop, xbot, xflx(0:mkx)
     real(r8)    tmp1, tmp2
 
+    !Water tracers:
+    real(r8)   wte(wtrc_nwset)              ! Total water tracer humidity at release level [ kg/kg ]
+    real(r8)   wtsrc(wtrc_nwset)            ! Total water tracer humidity at surface [ kg/kg ]
+    real(r8)   wtout(wtrc_nwset,3)          ! Output for water tracers from conden (1=vapor,2=liquid,3=ice)
+    real(r8)   wtout_emf_kbup(wtrc_nwset,3) ! Output from conden during penetrative entrainment [ kg/kg ]
+    real(r8)   wtexql(wtrc_nwset)           ! Expelled (detrained) water tracer liquid (not completely necessary)
+    real(r8)   wtexqi(wtrc_nwset)           ! Expelled (detrained) water tracer ice    (not completely necessary)
+    real(r8)   wtu_top(wtrc_nwset)          ! Tracer updraft flux at top of cloud (not sure if needed at all).
+    real(r8)   wlu_top(wtrc_nwset)          ! Tracer liquid flux in updraft at top of cloud (?)
+    real(r8)   wiu_top(wtrc_nwset)          ! Tracer ice flux in updraft at top of cloud (?)
+    real(r8)   wtu_mid(wtrc_nwset)          ! midlevel condensate (?)
+    real(r8)   wlu_mid(wtrc_nwset)          ! midlevel cloud liquid (?)
+    real(r8)   wiu_mid(wtrc_nwset)          ! midlevel cloud ice (?)
+    real(r8)   wtubelow(wtrc_nwset)         ! condensate below cloud level (?)
+    real(r8)   wlubelow(wtrc_nwset)         ! cloud liquid below updraft (?)
+    real(r8)   wiubelow(wtrc_nwset)         ! cloud ice below updraft (?)
+    real(r8)   Rldt                         ! Ratio of water tracer cloud liquid for detrainment
+    real(r8)   Ridt                         ! Ratio of water tracer cloud ice for detrainment
+    real(r8)   wttot0                       ! Total water tracer initial values
+
     !----- Some diagnostic internal output variables
 
     real(r8)  ufrcinvbase_out(mix)                            !  Cumulus updraft fraction at the PBL top [ fraction ]
@@ -866,7 +990,13 @@ end subroutine uwshcu_readnl
     real(r8)  flxrain_s(0:mkx)  
     real(r8)  flxsnow_s(0:mkx)  
     real(r8)  ntraprd_s(mkx)    
-    real(r8)  ntsnprd_s(mkx)    
+    real(r8)  ntsnprd_s(mkx)
+    
+    !Water tracers:
+    !*************
+    real(r8) wtflxrn_s(0:mkx,wtrc_nwset)
+    real(r8) wtflxsn_s(0:mkx,wtrc_nwset)
+    !*************
 
     real(r8)  excessu_arr_out(mix,mkx)
     real(r8)  excessu_arr(mkx) 
@@ -932,6 +1062,8 @@ end subroutine uwshcu_readnl
     real(r8)                         :: cush_s , precip_s, snow_s  , cin_s   , rliq_s, cbmf_s, cnt_s, cnb_s
     real(r8)                         :: cin_i,cin_f,del_CIN,ke,alpha,thlj
     real(r8)                         :: cinlcl_i,cinlcl_f,del_cinlcl
+    real(r8), dimension(mkx,wtrc_nwset) :: wtqc_liq_s, wtqc_ice_s  !Water tracers
+    real(r8), dimension(wtrc_nwset)     :: wtprec_s , wtsnow_s     !Water tracers    
     integer                          :: iter
 
     real(r8), dimension(mkx,ncnst)   :: tr0_s, trten_s
@@ -959,6 +1091,7 @@ end subroutine uwshcu_readnl
     real(r8), dimension(mkx,ncnst)   :: trten_o, sstr0_o  
     real(r8), dimension(0:mkx,ncnst) :: trflx_o
     real(r8), dimension(ncnst)       :: trsrc_o
+    real(r8), dimension(mkx,wtrc_nwset) :: sswt0_o !Water tracers
     integer                          :: ixnumliq, ixnumice, ixcldliq, ixcldice
 
     ! ------------------ !
@@ -1131,6 +1264,11 @@ end subroutine uwshcu_readnl
 
     trten_out(:iend,:mkx,:ncnst) = 0.0_r8
     trflx_out(:iend,0:mkx,:ncnst)= 0.0_r8
+
+    !Water tracers:
+    wtqc_out(:iend,:mkx,:ncnst)  = 0.0_r8
+    wtprec_out(:iend,:ncnst)     = 0.0_r8
+    wtsnow_out(:iend,:ncnst)     = 0.0_r8
     
     ufrcinvbase_out(:iend)       = 0.0_r8
     ufrclcl_out(:iend)           = 0.0_r8
@@ -1275,15 +1413,34 @@ end subroutine uwshcu_readnl
       do m = 1, ncnst
          sstr0(:mkx,m) = slope(mkx,tr0(:mkx,m),p0)
       enddo     
- 
+
+            !*************
+      !Water tracers
+      !*************
+      !NOTE:  This variables is needed since slope(sum) /= sum(slope) - JN
+      !NOTE:  The actual slope function they use has min/max calls which don't make
+      !any sense to me, since you should be able to calculate the slope directly
+      !without too many problems.  I should probably talk to someone about that
+      ! - JN.
+      if(trace_water) then
+        do m=1,wtrc_nwset
+          wt0(:mkx,m) = tr0(:mkx,wtrc_iatype(m,iwtvap)) + tr0(:mkx,wtrc_iatype(m,iwtliq)) + tr0(:mkx,wtrc_iatype(m,iwtice))
+          sswt0(:,m) = slope(mkx,wt0(:mkx,m) ,p0)
+        end do
+      end if
+      !*************
+       
       !----- 3. Compute "thv0" and "thvl0" at the top/bottom interfaces in each layer
       !         There are computed from the reconstructed thl, qt at the top/bottom.
+
+      !NOTE:  Given that this section is used purely to calculate thermodynamic variables, and not
+      !moisture tendencies, there is not need to call water tracer subroutines here. - JN
 
       do k = 1, mkx
 
          thl0bot = thl0(k) + ssthl0(k)*(ps0(k-1) - p0(k))
          qt0bot  = qt0(k)  + ssqt0(k) *(ps0(k-1) - p0(k))
-         call conden(ps0(k-1),thl0bot,qt0bot,thj,qvj,qlj,qij,qse,id_check)
+         call conden(ps0(k-1),thl0bot,qt0bot,thj,qvj,qlj,qij,qse,id_check,ncnst)
          if( id_check .eq. 1 ) then
              exit_conden(i) = 1._r8
              id_exit = .true.
@@ -1294,7 +1451,7 @@ end subroutine uwshcu_readnl
           
          thl0top = thl0(k) + ssthl0(k)*(ps0(k) - p0(k))
          qt0top  =  qt0(k) + ssqt0(k) *(ps0(k) - p0(k))
-         call conden(ps0(k),thl0top,qt0top,thj,qvj,qlj,qij,qse,id_check)
+         call conden(ps0(k),thl0top,qt0top,thj,qvj,qlj,qij,qse,id_check,ncnst)
          if( id_check .eq. 1 ) then
              exit_conden(i) = 1._r8
              id_exit = .true.
@@ -1332,6 +1489,11 @@ end subroutine uwshcu_readnl
          tr0_o(:mkx,m)     = tr0(:mkx,m)
          sstr0_o(:mkx,m)   = sstr0(:mkx,m)
       enddo 
+
+      !Water tracers:
+      if(trace_water) then
+        sswt0_o(:mkx,:)      =  sswt0(:mkx,:)
+      end if
 
       ! ---------------------------------------------- !
       ! Initialize output variables at each grid point !
@@ -1413,6 +1575,25 @@ end subroutine uwshcu_readnl
          tru(0:mkx,m)     = 0.0_r8
          tru_emf(0:mkx,m) = 0.0_r8
       enddo
+
+      !Water tracers:
+      wtdwten(:mkx,:)        = 0.0_r8
+      wtditen(:mkx,:)        = 0.0_r8
+      wtten_sink_liq(:mkx,:) = 0.0_r8
+      wtten_sink_ice(:mkx,:) = 0.0_r8
+      wtqc_liq(:mkx,:)       = 0.0_r8
+      wtqc_ice(:mkx,:)       = 0.0_r8
+      wtu(0:mkx,:)           = 0.0_r8
+      wtu_emf(0:mkx,:)       = 0.0_r8
+      wtflx(0:mkx,:)         = 0.0_r8
+      wttotten(:mkx,:)       = 0.0_r8
+      wtevp(:mkx,:)          = 0.0_r8
+      wtsub(:mkx,:)          = 0.0_r8
+      wtrpten(:mkx,:)        = 0.0_r8
+      wtspten(:mkx,:)        = 0.0_r8
+      dz(:mkx)               = 0.0_r8
+      wtprec                 = 0.0_r8 !<-may not be needed
+      wtsnow                 = 0.0_r8 !<-may not be needed
 
     !-----------------------------------------------! 
     ! Below 'iter' loop is for implicit CIN closure !
@@ -1522,6 +1703,16 @@ end subroutine uwshcu_readnl
           trsrc(m) = tr0(1,m)
        enddo 
 
+       !*************
+       !Water tracers
+       !*************
+       if(trace_water) then
+        do m=1,wtrc_nwset
+         wtsrc(m) = wt0(1,m)
+        end do
+      end if
+     !*************
+
        ! ------------------------------------------------------------------ !
        ! Find LCL of the source air and a layer index containing LCL (klcl) !
        ! When the LCL is exactly at the interface, 'klcl' is a layer index  ! 
@@ -1563,9 +1754,12 @@ end subroutine uwshcu_readnl
        ! in fully consistent with the other parts of the code.         !
        ! ------------------------------------------------------------- !
 
+       !NOTE:  This section of code appears to be purely for calculating thermodynamic
+       !variables, and thus does not need any water tracer code - JN.
+
        thl0lcl = thl0(klcl) + ssthl0(klcl) * ( plcl - p0(klcl) )
        qt0lcl  = qt0(klcl)  + ssqt0(klcl)  * ( plcl - p0(klcl) )
-       call conden(plcl,thl0lcl,qt0lcl,thj,qvj,qlj,qij,qse,id_check)
+       call conden(plcl,thl0lcl,qt0lcl,thj,qvj,qlj,qij,qse,id_check,ncnst)
        if( id_check .eq. 1 ) then
            exit_conden(i) = 1._r8
            id_exit = .true.
@@ -1622,7 +1816,7 @@ end subroutine uwshcu_readnl
                    cin     = cinlcl
                    !----- LCL to Top
                    thvubot = thvlsrc
-                   call conden(ps0(k),thlsrc,qtsrc,thj,qvj,qlj,qij,qse,id_check)
+                   call conden(ps0(k),thlsrc,qtsrc,thj,qvj,qlj,qij,qse,id_check,ncnst)
                    if( id_check .eq. 1 ) then
                        exit_conden(i) = 1._r8
                        id_exit = .true.
@@ -1636,7 +1830,7 @@ end subroutine uwshcu_readnl
                    end if
                else
                    thvubot = thvutop
-                   call conden(ps0(k),thlsrc,qtsrc,thj,qvj,qlj,qij,qse,id_check)
+                   call conden(ps0(k),thlsrc,qtsrc,thj,qvj,qlj,qij,qse,id_check,ncnst)
                    if( id_check .eq. 1 ) then
                        exit_conden(i) = 1._r8
                        id_exit = .true.
@@ -1658,14 +1852,14 @@ end subroutine uwshcu_readnl
        else
           cinlcl = 0._r8 
           do k = kinv, mkx - 1
-             call conden(ps0(k-1),thlsrc,qtsrc,thj,qvj,qlj,qij,qse,id_check)
+             call conden(ps0(k-1),thlsrc,qtsrc,thj,qvj,qlj,qij,qse,id_check,ncnst)
              if( id_check .eq. 1 ) then
                  exit_conden(i) = 1._r8
                  id_exit = .true.
                  go to 333
              end if
              thvubot = thj * ( 1._r8 + zvir*qvj - qlj - qij )
-             call conden(ps0(k),thlsrc,qtsrc,thj,qvj,qlj,qij,qse,id_check)
+             call conden(ps0(k),thlsrc,qtsrc,thj,qvj,qlj,qij,qse,id_check,ncnst)
              if( id_check .eq. 1 ) then
                  exit_conden(i) = 1._r8
                  id_exit = .true.
@@ -1812,9 +2006,14 @@ end subroutine uwshcu_readnl
                ssu0(:mkx)           = ssu0_o(:mkx) 
                ssv0(:mkx)           = ssv0_o(:mkx) 
                do m = 1, ncnst
-                  tr0(:mkx,m)   = tr0_o(:mkx,m)
+                  tr0(:mkx,m)   = tr0_o(:mkx,m)   !<-includes water tracers
                   sstr0(:mkx,m) = sstr0_o(:mkx,m)
                enddo
+
+                !water tracers:
+               if(trace_water) then
+                sswt0(:mkx,:)    = sswt0_o(:mkx,:)
+              end if
 
                ! ------------------------------------------------------ !
                ! Initialize all fluxes, tendencies, and other variables ! 
@@ -1875,6 +2074,20 @@ end subroutine uwshcu_readnl
                   tru_emf(0:mkx,m) = 0.0_r8
                enddo
 
+            !Water tracers (are not "ncnst" dimensioned):
+               wtdwten(:mkx,:)  = 0.0_r8    
+               wtditen(:mkx,:)  = 0.0_r8
+               wtrpten(:mkx,:)  = 0.0_r8
+               wtspten(:mkx,:)  = 0.0_r8
+               wtqc_liq(:mkx,:) = 0.0_r8
+               wtqc_ice(:mkx,:) = 0.0_r8
+               wtu(0:mkx,:)     = 0.0_r8
+               wtu_emf(0:mkx,:) = 0.0_r8
+               wtflx(0:mkx,:)   = 0.0_r8
+               wttotten(:mkx,:) = 0.0_r8
+               wtprec           = 0.0_r8 !<-May not be needed
+               wtsnow           = 0.0_r8 !<-May not be needed
+   
                ! -------------------------------------------------- !
                ! Below are diagnostic output variables for detailed !
                ! analysis of cumulus scheme.                        !
@@ -1934,6 +2147,17 @@ end subroutine uwshcu_readnl
                do m = 1, ncnst
                   trten_out(i,:mkx,m)   = trten_s(:mkx,m)
                enddo  
+               !*************
+               !Water tracers
+               !*************
+               if(trace_water) then
+                do m=1,wtrc_nwset
+                  wtqc_out(i,:mkx,wtrc_iatype(m,iwtliq)) = wtqc_liq_s(:mkx,m)
+                  wtqc_out(i,:mkx,wtrc_iatype(m,iwtice)) = wtqc_ice_s(:mkx,m) 
+                  wtprec_out(i,wtrc_iatype(m,iwtvap))    = wtprec_s(m)
+                  wtsnow_out(i,wtrc_iatype(m,iwtvap))    = wtsnow_s(m)
+                end do
+              end if
              
                ! ------------------------------------------------------------------------------ ! 
                ! Below are diagnostic output variables for detailed analysis of cumulus scheme. !
@@ -2189,17 +2413,20 @@ end subroutine uwshcu_readnl
        ! vertically redistributes environmental horizontal momentum.                !
        ! -------------------------------------------------------------------------- !
 
+       !NOTE:  The condensation call below appears to only impact the thermodynamics, and
+       !thus does not probably need to be replicated. - JN.
+
        emf(krel-1)  = 0._r8
        umf(krel-1)  = cbmf
        wu(krel-1)   = wrel
        thlu(krel-1) = thlsrc
        qtu(krel-1)  = qtsrc
-       call conden(prel,thlsrc,qtsrc,thj,qvj,qlj,qij,qse,id_check)
+       call conden(prel,thlsrc,qtsrc,thj,qvj,qlj,qij,qse,id_check,ncnst)
        if( id_check .eq. 1 ) then
            exit_conden(i) = 1._r8
            id_exit = .true.
            go to 333
-       endif
+       end if
        thvu(krel-1) = thj * ( 1._r8 + zvir*qvj - qlj - qij )       
 
        uplus = 0._r8
@@ -2219,8 +2446,18 @@ end subroutine uwshcu_readnl
        vu(krel-1) = vsrc + vplus      
 
        do m = 1, ncnst
-          tru(krel-1,m)  = trsrc(m)
+          tru(krel-1,m)  = trsrc(m)  !<-Includes water tracers 
        enddo
+
+        !*************
+       !Water tracers
+       !*************
+       if(trace_water) then
+        do m=1,wtrc_nwset
+           wtu(krel-1,m) = wtsrc(m)
+        end do
+      end if
+      !*************
 
        ! -------------------------------------------------------------------------- !
        ! Define environmental properties at the level where buoyancy sorting occurs !
@@ -2240,6 +2477,16 @@ end subroutine uwshcu_readnl
        do m = 1, ncnst
           tre(m) = tr0(krel,m)  + sstr0(krel,m) * ( pe - p0(krel) )
        enddo
+
+        !*************
+       !Water tracers
+       !*************
+       if(trace_water) then
+        do m=1,wtrc_nwset
+           wte(m) = wt0(krel,m) + sswt0(krel,m) * ( pe - p0(krel) )
+        end do
+      end if
+      !*************
 
        !-------------------------! 
        ! Buoyancy-Sorting Mixing !
@@ -2364,6 +2611,16 @@ end subroutine uwshcu_readnl
           tre(m) = tr0(krel,m)  + sstr0(krel,m)  * ( pe - p0(krel) )
        enddo
 
+    !*************
+      !Water tracers
+      !*************
+      if(trace_water) then
+        do m=1,wtrc_nwset
+          wte(m) = wt0(krel,m) + sswt0(krel,m) * ( pe - p0(krel) )
+        end do
+      end if
+      !*************
+
        ! ----------------------------------------------------------------------- !
        ! Cumulus rises upward from 'prel' ( or base interface of  'krel' layer ) !
        ! until updraft vertical velocity becomes zero.                           !
@@ -2403,7 +2660,10 @@ end subroutine uwshcu_readnl
           ! of "qsat". But note normal argument of "qsat" is temperature.    !
           ! ---------------------------------------------------------------- !
 
-          call conden(pe,thle,qte,thj,qvj,qlj,qij,qse,id_check)
+          !NOTE:  This section is used purely for buoyancy sorting, and thus
+          !does not need to be replicated for water tracers - JN.
+
+          call conden(pe,thle,qte,thj,qvj,qlj,qij,qse,id_check,ncnst)
           if( id_check .eq. 1 ) then
               exit_conden(i) = 1._r8
               id_exit = .true.
@@ -2415,7 +2675,7 @@ end subroutine uwshcu_readnl
           call qsat(qsat_arg, pe, es, qs)
           excess0  = qte - qs
 
-          call conden(pe,thlue,qtue,thj,qvj,qlj,qij,qse,id_check)
+          call conden(pe,thlue,qtue,thj,qvj,qlj,qij,qse,id_check,ncnst)
           if( id_check .eq. 1 ) then
               exit_conden(i) = 1._r8
               id_exit = .true.
@@ -2436,7 +2696,7 @@ end subroutine uwshcu_readnl
                qtue  = qtue - exql - exqi
                thlue = thlue + (xlv/cp/exne)*exql + (xls/cp/exne)*exqi 
           endif
-          call conden(pe,thlue,qtue,thj,qvj,qlj,qij,qse,id_check)
+          call conden(pe,thlue,qtue,thj,qvj,qlj,qij,qse,id_check,ncnst)
           if( id_check .eq. 1 ) then
               exit_conden(i) = 1._r8
               id_exit = .true.
@@ -2490,7 +2750,7 @@ end subroutine uwshcu_readnl
               xsat    = excessu / ( excessu - excess0 );
               thlxsat = thlue + xsat * ( thle - thlue );
               qtxsat  = qtue  + xsat * ( qte - qtue );
-              call conden(pe,thlxsat,qtxsat,thj,qvj,qlj,qij,qse,id_check)
+              call conden(pe,thlxsat,qtxsat,thj,qvj,qlj,qij,qse,id_check,ncnst)
               if( id_check .eq. 1 ) then
                   exit_conden(i) = 1._r8
                   id_exit = .true.
@@ -2579,9 +2839,18 @@ end subroutine uwshcu_readnl
               qtu(k)  =  qtu(km1) + ( qte  +  ssqt0(k) * dpe / 2._r8 -  qtu(km1) ) * fer(k) * dpe
               uu(k)   =   uu(km1) + ( ue   +   ssu0(k) * dpe / 2._r8 -   uu(km1) ) * fer(k) * dpe - PGFc * ssu0(k) * dpe
               vu(k)   =   vu(km1) + ( ve   +   ssv0(k) * dpe / 2._r8 -   vu(km1) ) * fer(k) * dpe - PGFc * ssv0(k) * dpe
-              do m = 1, ncnst
+              do m = 1, ncnst !<-Handles water tracers
                  tru(k,m)  =  tru(km1,m) + ( tre(m)  + sstr0(k,m) * dpe / 2._r8  -  tru(km1,m) ) * fer(k) * dpe
               enddo
+              !*************
+             !Water tracers
+             !*************
+              if(trace_water) then
+                do m=1,wtrc_nwset
+                  wtu(k,m) = wtu(km1,m) + ( wte(m)  +  sswt0(k,m) * dpe / 2._r8 -  wtu(km1,m) ) * fer(k) * dpe
+                end do
+              end if
+             !*************
           else
               thlu(k) = ( thle + ssthl0(k) / fer(k) - ssthl0(k) * dpe / 2._r8 ) -          &
                         ( thle + ssthl0(k) * dpe / 2._r8 - thlu(km1) + ssthl0(k) / fer(k) ) * exp(-fer(k) * dpe)
@@ -2591,10 +2860,20 @@ end subroutine uwshcu_readnl
                         ( ue +     ssu0(k) * dpe / 2._r8 -   uu(km1) + ( 1._r8 - PGFc ) * ssu0(k) / fer(k) ) * exp(-fer(k) * dpe)
               vu(k) =   ( ve + ( 1._r8 - PGFc ) * ssv0(k) / fer(k) - ssv0(k) * dpe / 2._r8 ) - &
                         ( ve +     ssv0(k) * dpe / 2._r8 -   vu(km1) + ( 1._r8 - PGFc ) * ssv0(k) / fer(k) ) * exp(-fer(k) * dpe)
-              do m = 1, ncnst
+              do m = 1, ncnst !<-Handles water tracers
                  tru(k,m)  = ( tre(m)  + sstr0(k,m) / fer(k) - sstr0(k,m) * dpe / 2._r8 ) - &  
                              ( tre(m)  + sstr0(k,m) * dpe / 2._r8 - tru(km1,m) + sstr0(k,m) / fer(k) ) * exp(-fer(k) * dpe)
               enddo
+            !*************
+             !Water tracers
+             !*************
+              if(trace_water) then
+                do m=1,wtrc_nwset
+                  wtu(k,m) = ( wte(m)  +  sswt0(k,m) / fer(k) -  sswt0(k,m) * dpe / 2._r8 ) -          &
+                          ( wte(m)  +  sswt0(k,m) * dpe / 2._r8 -  wtu(km1,m) +  sswt0(k,m) / fer(k) ) * exp(-fer(k) * dpe)
+                end do
+              end if
+             !*************
           end if
 
           !------------------------------------------------------------------- !
@@ -2621,7 +2900,13 @@ end subroutine uwshcu_readnl
           ! also.                                                              !
           ! ------------------------------------------------------------------ !
 
-          call conden(ps0(k),thlu(k),qtu(k),thj,qvj,qlj,qij,qse,id_check)
+          if(trace_water) then
+            wtout(:,:) = 0.0_r8
+            call conden(ps0(k),thlu(k),qtu(k),thj,qvj,qlj,qij,qse,id_check,wtrc_nwset,qv0=qtu(k),tr0=wtu(k,:),wtout=wtout)
+          else
+            call conden(ps0(k),thlu(k),qtu(k),thj,qvj,qlj,qij,qse,id_check,ncnst)
+          end if
+          
           if( id_check .eq. 1 ) then
               exit_conden(i) = 1._r8
               id_exit = .true.
@@ -2650,14 +2935,52 @@ end subroutine uwshcu_readnl
                ! ---------------------------------------------------------------- !
                dwten(k) = exql   
                diten(k) = exqi
+
+               if(trace_water) then
+                !**********************************************************
+                !Generate condensate detrainment for water tracers/isotopes
+                !**********************************************************
+                !Method one:  Calculate condensate ratio, and adjust detrainment
+                !values accordingly. - JN
+                  do m=1,wtrc_nwset !Loop over water species
+ 
+                    ! Rldt = wtrc_ratio(iwspec(wtrc_iatype(m,iwtliq)),wtout(m,2),wtout(1,2))  !Calculate liquid ratio
+                    ! Ridt = wtrc_ratio(iwspec(wtrc_iatype(m,iwtice)),wtout(m,3),wtout(1,3))  !Calculate ice ratio
+                    Rldt = wtrc_ratio(m,wtout(m,2),wtout(1,2))  !Calculate liquid ratio
+                    Ridt = wtrc_ratio(m,wtout(m,3),wtout(1,3))  !Calculate ice ratio
+ 
+                    wtexql(m) = Rldt*exql  !Modify detrainment by tracer ratio
+                    wtexqi(m) = Ridt*exqi
+ 
+                   !Remove detrained condensate from updraft values:
+                    tru(k,wtrc_iatype(m,iwtliq)) = tru(k,wtrc_iatype(m,iwtliq)) - wtexql(m)
+                    tru(k,wtrc_iatype(m,iwtice)) = tru(k,wtrc_iatype(m,iwtice)) - wtexqi(m)
+ 
+                    wtu(k,m) = wtu(k,m) - wtexql(m) - wtexqi(m)
+ 
+                   !Add detrained condensate to detrainment tendency:
+                    wtdwten(k,m) = wtexql(m)
+                    wtditen(k,m) = wtexqi(m)
+                  end do
+                !**********************************************************
+                end if
+
           else
                dwten(k) = 0._r8
                diten(k) = 0._r8
+
+               !Water tracers:
+               wtdwten(k,:) = 0._r8
+               wtditen(k,:) = 0._r8
           endif
           ! ----------------------------------------------------------------- ! 
           ! Update 'thvu(k)' after detraining condensate from cumulus updraft.!
           ! ----------------------------------------------------------------- ! 
-          call conden(ps0(k),thlu(k),qtu(k),thj,qvj,qlj,qij,qse,id_check)
+
+          !NOTE:  This condensation appears to be used solely for thermodynamics, and thus
+          !does not need to be replicated. - JN.
+
+          call conden(ps0(k),thlu(k),qtu(k),thj,qvj,qlj,qij,qse,id_check,ncnst)
           if( id_check .eq. 1 ) then
               exit_conden(i) = 1._r8
               id_exit = .true.
@@ -2820,8 +3143,18 @@ end subroutine uwshcu_readnl
           ue      = u0(k+1)
           ve      = v0(k+1) 
           do m = 1, ncnst
-             tre(m)  = tr0(k+1,m)
+             tre(m)  = tr0(k+1,m) !<-Water tracers handled here (may need to modify).
           enddo
+
+          !*************
+          !Water tracers
+          !*************
+          if(trace_water) then
+            do m=1,wtrc_nwset
+              wte(m) = wt0(k+1,m)
+            end do
+          end if
+          !*************
 
        end do   ! End of cumulus updraft loop from the 'krel' layer to 'kpen' layer.
        
@@ -2867,8 +3200,6 @@ end subroutine uwshcu_readnl
        ! ------------------------------------------------------------------------------ ! 
        
        drage_cond = ( drage .eq. 0._r8 )
-       if(pergro_mods) drage_cond = ( drage*dp0(kpen) .lt.  1.e-4_r8)
-!       if( drage .eq. 0._r8 ) then !BSINGH - This is the original code
        if( drage_cond ) then !BSINGH - Phil suggested modification
            aquad =  ( bogtop - bogbot ) / ( ps0(kpen) - ps0(kpen-1) )
            bquad =  2._r8 * bogbot
@@ -2905,6 +3236,15 @@ end subroutine uwshcu_readnl
        if( fer(kpen)*(-ppen) .lt. 1.e-4_r8 ) then
            thlu_top = thlu(kpen-1) + ( thl0(kpen) + ssthl0(kpen) * (-ppen) / 2._r8 - thlu(kpen-1) ) * fer(kpen) * (-ppen)
            qtu_top  =  qtu(kpen-1) + (  qt0(kpen) +  ssqt0(kpen) * (-ppen) / 2._r8  - qtu(kpen-1) ) * fer(kpen) * (-ppen)
+           !Water tracers:
+          !************* 
+           if(trace_water) then
+            do m=1,wtrc_nwset
+              wtu_top(m) = wtu(kpen-1,m) + ( wt0(kpen,m) +  sswt0(kpen,m) * &
+                           (-ppen) / 2._r8  - wtu(kpen-1,m) ) * fer(kpen) * (-ppen)
+            end do
+          end if
+         !*************
        else
            thlu_top = ( thl0(kpen) + ssthl0(kpen) / fer(kpen) - ssthl0(kpen) * (-ppen) / 2._r8 ) - &
                       ( thl0(kpen) + ssthl0(kpen) * (-ppen) / 2._r8 - thlu(kpen-1) + ssthl0(kpen) / fer(kpen) ) &
@@ -2912,9 +3252,28 @@ end subroutine uwshcu_readnl
            qtu_top  = ( qt0(kpen)  +  ssqt0(kpen) / fer(kpen) -  ssqt0(kpen) * (-ppen) / 2._r8 ) - &  
                       ( qt0(kpen)  +  ssqt0(kpen) * (-ppen) / 2._r8 -  qtu(kpen-1) +  ssqt0(kpen) / fer(kpen) ) &
                       * exp(-fer(kpen) * (-ppen))
+        !Water tracers:
+          !*************
+           if(trace_water) then
+            do m=1,wtrc_nwset
+              wtu_top(m) = ( wt0(kpen,m)  +  sswt0(kpen,m) / fer(kpen) -  sswt0(kpen,m) * (-ppen) / 2._r8 ) - &
+              ( wt0(kpen,m)  +  sswt0(kpen,m) * (-ppen) / 2._r8 -  wtu(kpen-1,m) +  sswt0(kpen,m) / fer(kpen) ) &
+              * exp(-fer(kpen) * (-ppen))
+            end do
+          end if
+         !*************
        end if
 
-       call conden(ps0(kpen-1)+ppen,thlu_top,qtu_top,thj,qvj,qlj,qij,qse,id_check)
+       !NOTE:  Not 100% sure if using qv0/tr0 to calculate R is appropriate here
+       !(versus some sort of updraft quantity) - JN 
+
+       if(trace_water) then
+        wtout(:,:) = 0._r8
+        call conden(ps0(kpen-1)+ppen,thlu_top,qtu_top,thj,qvj,qlj,qij,qse, &
+                    id_check,wtrc_nwset,qv0=qtu_top,tr0=wtu_top(:),wtout=wtout)
+      else
+        call conden(ps0(kpen-1)+ppen,thlu_top,qtu_top,thj,qvj,qlj,qij,qse,id_check,ncnst)
+      end if
        if( id_check .eq. 1 ) then
            exit_conden(i) = 1._r8
            id_exit = .true.
@@ -2926,9 +3285,43 @@ end subroutine uwshcu_readnl
             diten(kpen) = ( ( qlj + qij ) - criqc ) * qij / ( qlj + qij )
             qtu_top  = qtu_top - dwten(kpen) - diten(kpen)
             thlu_top = thlu_top + (xlv/cp/exntop)*dwten(kpen) + (xls/cp/exntop)*diten(kpen) 
+
+            if(trace_water) then 
+                !*********************************************
+                !Re-calculate water tracer expelled condensate
+                !*********************************************
+    
+                !Method one:  Calculate condensate ratio, and adjust detrainment
+                !values accordingly. - JN
+    
+                  do m=1,wtrc_nwset !Loop over water species
+    
+                    ! Rldt = wtrc_ratio(iwspec(wtrc_iatype(m,iwtliq)),wtout(m,2),wtout(1,2))  !Calculate liquid ratio
+                    ! Ridt = wtrc_ratio(iwspec(wtrc_iatype(m,iwtice)),wtout(m,3), wtout(1,3))  !Calculate ice ratio
+                    Rldt = wtrc_ratio(m,wtout(m,2),wtout(1,2))  !Calculate liquid ratio
+                    Ridt = wtrc_ratio(m,wtout(m,3), wtout(1,3))  !Calculate ice ratio
+    
+                    !Add detrained condensate to detrainment tendency:
+                    wtdwten(kpen,m) = Rldt*dwten(kpen)
+                    wtditen(kpen,m) = Ridt*diten(kpen)
+    
+                    !Remove detrained condensate from updraft values:
+                     wtu_top(m) = wtu_top(m)-wtdwten(kpen,m) - wtditen(kpen,m)
+    
+                  end do
+                !*********************************************
+                end if
+
        else
             dwten(kpen) = 0._r8
             diten(kpen) = 0._r8
+            !Water tracers:
+           !*************
+            if(trace_water) then
+                wtdwten(kpen,:) = 0._r8
+                wtditen(kpen,:) = 0._r8
+              end if
+             !************ 
        endif      
  
        ! ----------------------------------------------------------------------- !
@@ -3004,6 +3397,14 @@ end subroutine uwshcu_readnl
        diten(kpen+1:mkx) = 0._r8
        fer(kpen+1:mkx)   = 0._r8
        fdr(kpen+1:mkx)   = 0._r8
+
+       !Water tracers:
+      !*************
+       if(trace_water) then
+        wtdwten(kpen+1:mkx,:) = 0._r8
+        wtditen(kpen+1:mkx,:) = 0._r8
+      end if
+     !*************
        
        ! ------------------------------------------------------------------------ !
        ! Calculate downward penetrative entrainment mass flux, 'emf(k) < 0',  and !
@@ -3048,8 +3449,17 @@ end subroutine uwshcu_readnl
           uu_emf(k)   = uu(k)
           vu_emf(k)   = vu(k)
           do m = 1, ncnst
-             tru_emf(k,m)  = tru(k,m)
+             tru_emf(k,m)  = tru(k,m) !<-Water tracers handled here
           enddo
+          !*************
+          !water tracers
+          !*************
+          if(trace_water) then
+            do m=1,wtrc_nwset
+              wtu_emf(k,m) = wtu(k,m) !Set initial values
+            end do
+          end if
+          !*************
        end do
 
        do k = kpen - 1, kbup, -1  ! Here, 'k' is an interface index at which
@@ -3092,9 +3502,17 @@ end subroutine uwshcu_readnl
              uu_emf(k)   = u0(kpen)   + ssu0(kpen)   * ( ps0(k) - p0(kpen) )     
              vu_emf(k)   = v0(kpen)   + ssv0(kpen)   * ( ps0(k) - p0(kpen) )   
              do m = 1, ncnst
-                tru_emf(k,m)  = tr0(kpen,m)  + sstr0(kpen,m)  * ( ps0(k) - p0(kpen) )
+                tru_emf(k,m)  = tr0(kpen,m)  + sstr0(kpen,m)  * ( ps0(k) - p0(kpen) )  !<-Water tracers handled here.
              enddo
-
+             !*************
+             !water tracers
+             !*************
+             if(trace_water) then   
+                do m=1,wtrc_nwset
+                  wtu_emf(k,m) = wt0(kpen,m) + sswt0(kpen,m) * ( ps0(k) - p0(kpen) ) !Set initial values
+                end do
+              end if
+              !*************
           else ! if(k.lt.kpen-1). 
               
              ! --------------------------------------------------------------------------- !
@@ -3108,40 +3526,41 @@ end subroutine uwshcu_readnl
 
                  if( ( emf(k+1)-umf(k)*dp0(k+1)*rei(k+1)*rpen ) .lt. -0.1_r8*rhos0j )        limit_emf(i) = 1
                  if( ( emf(k+1)-umf(k)*dp0(k+1)*rei(k+1)*rpen ) .lt. -0.9_r8*dp0(k+1)/g/dt ) limit_emf(i) = 1         
-                 emf(k) = max(max(emf(k+1)-umf(k)*dp0(k+1)*rei(k+1)*rpen, -0.1_r8*rhos0j), -0.9_r8*dp0(k+1)/g/dt )    
-                 
-                 if(pergro_mods) then
-                    !BSINGH - new code suggected by sungsu
-                    gam_fac = emf(k) / min( -1.e-20_r8, emf(k+1)-umf(k)*dp0(k+1)*rei(k+1)*rpen )
-                    
-                    thlu_emf(k) = ( thlu_emf(k+1) * emf(k+1) * gam_fac + thl0(k+1) * ( emf(k) - emf(k+1) * gam_fac ) ) / emf(k)
-                    qtu_emf(k)  = ( qtu_emf(k+1)  * emf(k+1) * gam_fac + qt0(k+1)  * ( emf(k) - emf(k+1) * gam_fac ) ) / emf(k)
-                    uu_emf(k)   = ( uu_emf(k+1)   * emf(k+1) * gam_fac + u0(k+1)   * ( emf(k) - emf(k+1) * gam_fac ) ) / emf(k)
-                    vu_emf(k)   = ( vu_emf(k+1)   * emf(k+1) * gam_fac + v0(k+1)   * ( emf(k) - emf(k+1) * gam_fac ) ) / emf(k)
-                    do m = 1, ncnst
-                       tru_emf(k,m) = ( tru_emf(k+1,m)  * emf(k+1) * gam_fac + tr0(k+1,m)  * ( emf(k) - emf(k+1) * gam_fac ) ) / emf(k)
-                    enddo
-                    !BSINGH - new code suggected by sungsu ENDS
-                 else
-                    !BSINGH - commenting out the following original code:
+                 emf(k) = max(max(emf(k+1)-umf(k)*dp0(k+1)*rei(k+1)*rpen, -0.1_r8*rhos0j), -0.9_r8*dp0(k+1)/g/dt )   
                     if( abs(emf(k)) .gt. abs(emf(k+1)) ) then
                        thlu_emf(k) = ( thlu_emf(k+1) * emf(k+1) + thl0(k+1) * ( emf(k) - emf(k+1) ) ) / emf(k)
                        qtu_emf(k)  = ( qtu_emf(k+1)  * emf(k+1) + qt0(k+1)  * ( emf(k) - emf(k+1) ) ) / emf(k)
                        uu_emf(k)   = ( uu_emf(k+1)   * emf(k+1) + u0(k+1)   * ( emf(k) - emf(k+1) ) ) / emf(k)
                        vu_emf(k)   = ( vu_emf(k+1)   * emf(k+1) + v0(k+1)   * ( emf(k) - emf(k+1) ) ) / emf(k)
-                       do m = 1, ncnst
+                       do m = 1, ncnst !<-Water tracers handled here.
                           tru_emf(k,m)  = ( tru_emf(k+1,m)  * emf(k+1) + tr0(k+1,m)  * ( emf(k) - emf(k+1) ) ) / emf(k)
                        enddo
+                       !*************
+                     !water tracers
+                     !*************
+                     if(trace_water) then
+                        do m=1,wtrc_nwset
+                          wtu_emf(k,m) = ( wtu_emf(k+1,m)  * emf(k+1) + wt0(k+1,m)  * ( emf(k) - emf(k+1) ) ) / emf(k)
+                        end do
+                      end if
+                      !*************
                     else   
                        thlu_emf(k) = thl0(k+1)
                        qtu_emf(k)  =  qt0(k+1)
                        uu_emf(k)   =   u0(k+1)
                        vu_emf(k)   =   v0(k+1)
                        do m = 1, ncnst
-                          tru_emf(k,m)  =  tr0(k+1,m)
+                          tru_emf(k,m)  =  tr0(k+1,m) !<-water tracers handled here.
                        enddo
-                    endif
-                    !BSINGH -  commenting out the following original code ENDS
+                       !*************
+                     !water tracers
+                     !*************
+                     if(trace_water) then
+                        do m=1,wtrc_nwset
+                          wtu_emf(k,m) = wt0(k+1,m)
+                        end do
+                      end if
+                      !*************
                  endif
              else ! Alternative Non-Cumulative Penetrative Entrainment
 
@@ -3153,9 +3572,17 @@ end subroutine uwshcu_readnl
                  uu_emf(k)   =   u0(k+1)
                  vu_emf(k)   =   v0(k+1)
                  do m = 1, ncnst
-                    tru_emf(k,m)  =  tr0(k+1,m)
+                    tru_emf(k,m)  =  tr0(k+1,m) !<-Water tracers used here
                  enddo
-
+                 !*************
+                !water tracers
+                !*************
+                 if(trace_water) then
+                    do m=1,wtrc_nwset
+                      wtu_emf(k,m) = wt0(k+1,m)
+                    end do
+                  end if
+                 !*************
              endif
 
           endif
@@ -3295,6 +3722,21 @@ end subroutine uwshcu_readnl
           trflx(0:kinv-1,m) = xflx(0:kinv-1)
        enddo
 
+       !*************
+       !water tracers
+       !*************
+       if(trace_water) then
+        do m=1,wtrc_nwset
+          xsrc  = wtsrc(m)
+          xmean = wt0(kinv,m)
+          xtop  = wt0(kinv+1,m) + sswt0(kinv+1,m) * ( ps0(kinv)   - p0(kinv+1) )
+          xbot  = wt0(kinv-1,m) + sswt0(kinv-1,m) * ( ps0(kinv-1) - p0(kinv-1) )
+          call fluxbelowinv( cbmf, ps0(0:mkx), mkx, kinv, dt, xsrc, xmean, xtop, xbot, xflx )
+          wtflx(0:kinv-1,m) = xflx(0:kinv-1)
+        end do
+      end if
+      !*************
+
        ! -------------------------------------------------------------- !
        ! 2. Non-buoyancy sorting fluxes : kinv <= k <= krel - 1         !
        !    Note that when 'krel = kinv', below block is never executed !
@@ -3315,7 +3757,16 @@ end subroutine uwshcu_readnl
           vflx(k)  = cbmf * ( vsrc + vplus -  (  v0(kp1)  +   ssv0(kp1) * ( ps0(k) - p0(kp1) ) ) )
           do m = 1, ncnst
              trflx(k,m) = cbmf * ( trsrc(m)  - (  tr0(kp1,m) +  sstr0(kp1,m) * ( ps0(k) - p0(kp1) ) ) )
-          enddo          
+          enddo   
+          !*************
+         !water tracers
+         !*************
+         if(trace_water) then
+            do m=1,wtrc_nwset
+              wtflx(k,m) = cbmf * ( wtsrc(m) - ( wt0(kp1,m) + sswt0(kp1,m) * ( ps0(k) - p0(kp1))))
+            end do
+          end if
+          !*************       
        end do
 
        ! ------------------------------------------------------------------------ !
@@ -3334,6 +3785,15 @@ end subroutine uwshcu_readnl
           do m = 1, ncnst
              trflx(k,m) = umf(k) * ( tru(k,m) - ( tr0(kp1,m) + sstr0(kp1,m) * ( ps0(k) - p0(kp1) ) ) )
           enddo
+          !*************
+          !water tracers
+          !*************
+          if(trace_water) then
+            do m=1,wtrc_nwset
+              wtflx(k,m) = umf(k) * ( wtu(k,m) - ( wt0(kp1,m) + sswt0(kp1,m) * ( ps0(k) - p0(kp1) ) ) )
+            end do
+          end if
+          !*************
        end do
 
        ! ------------------------------------------------------------------------- !
@@ -3404,6 +3864,15 @@ end subroutine uwshcu_readnl
           do m = 1, ncnst
              trflx(k,m) = emf(k) * ( tru_emf(k,m) - ( tr0(k,m) + sstr0(k,m) * ( ps0(k) - p0(k) ) ) ) 
           enddo
+          !*************
+          !water tracers
+          !*************
+          if(trace_water) then
+            do m=1,wtrc_nwset
+              wtflx(k,m) = emf(k) * ( wtu_emf(k,m) - ( wt0(k,m) + sswt0(k,m) * ( ps0(k) - p0(k) ) ) )
+            end do
+          end if
+          !*************
        end do
 
        ! ------------------------------------------- !
@@ -3441,6 +3910,11 @@ end subroutine uwshcu_readnl
                   qiten_sub  = 0._r8
                   nlten_sub  = 0._r8
                   niten_sub  = 0._r8
+                  !Water tracers:
+                  if(trace_water) then
+                    wtlten_sub(:) = 0._r8
+                    wtiten_sub(:) = 0._r8
+                  end if
               else
                   thlten_sub = g * comsub(k) * ( thl0(k+1) - thl0(k) ) / ( p0(k) - p0(k+1) )
                   qtten_sub  = g * comsub(k) * (  qt0(k+1) -  qt0(k) ) / ( p0(k) - p0(k+1) )
@@ -3448,6 +3922,19 @@ end subroutine uwshcu_readnl
                   qiten_sub  = g * comsub(k) * (  qi0(k+1) -  qi0(k) ) / ( p0(k) - p0(k+1) )
                   nlten_sub  = g * comsub(k) * (  tr0(k+1,ixnumliq) -  tr0(k,ixnumliq) ) / ( p0(k) - p0(k+1) )
                   niten_sub  = g * comsub(k) * (  tr0(k+1,ixnumice) -  tr0(k,ixnumice) ) / ( p0(k) - p0(k+1) )
+                  !*********************************************************************
+                 !Calculate water tracer condensate tendency due to vertical air motion
+                 !*********************************************************************
+                  if(trace_water) then
+                    !NOTE:  May only need one subsidence variable. - JN
+                     do m=1,wtrc_nwset !Loop over water species
+                       wtlten_sub(m) = g*comsub(k)*(tr0(k+1,wtrc_iatype(m,iwtliq)) - &
+                                                          tr0(k,wtrc_iatype(m,iwtliq)))/( p0(k) - p0(k+1))
+                       wtiten_sub(m) = g*comsub(k)*(tr0(k+1,wtrc_iatype(m,iwtice)) - &
+                                                          tr0(k,wtrc_iatype(m,iwtice)))/( p0(k) - p0(k+1))
+                     end do
+                   end if
+                  !*********************************************************************** 
               endif
           else
               if( k .eq. 1 ) then
@@ -3457,6 +3944,11 @@ end subroutine uwshcu_readnl
                   qiten_sub  = 0._r8
                   nlten_sub  = 0._r8
                   niten_sub  = 0._r8
+                  !Water tracers:
+                  if(trace_water) then
+                    wtlten_sub(:) = 0._r8
+                    wtiten_sub(:) = 0._r8
+                  end if
               else
                   thlten_sub = g * comsub(k) * ( thl0(k) - thl0(k-1) ) / ( p0(k-1) - p0(k) )
                   qtten_sub  = g * comsub(k) * (  qt0(k) -  qt0(k-1) ) / ( p0(k-1) - p0(k) )
@@ -3464,11 +3956,23 @@ end subroutine uwshcu_readnl
                   qiten_sub  = g * comsub(k) * (  qi0(k) -  qi0(k-1) ) / ( p0(k-1) - p0(k) )
                   nlten_sub  = g * comsub(k) * (  tr0(k,ixnumliq) -  tr0(k-1,ixnumliq) ) / ( p0(k-1) - p0(k) )
                   niten_sub  = g * comsub(k) * (  tr0(k,ixnumice) -  tr0(k-1,ixnumice) ) / ( p0(k-1) - p0(k) )
+                  !*********************************************************************
+                 !Calculate water tracer condensate tendency due to vertical air motion
+                 !*********************************************************************
+                  if(trace_water) then
+                    do m=1,wtrc_nwset !Loop over water species
+                      wtlten_sub(m) = g * comsub(k) * (  tr0(k,wtrc_iatype(m,iwtliq)) - &
+                                                         tr0(k-1,wtrc_iatype(m,iwtliq)) ) / ( p0(k-1) - p0(k) )
+                      wtiten_sub(m) = g * comsub(k) * (  tr0(k,wtrc_iatype(m,iwtice)) - &
+                                                         tr0(k-1,wtrc_iatype(m,iwtice)) ) / ( p0(k-1) - p0(k) )
+                    end do
+                  end if
+                 !*********************************************************************
               endif
           endif
           thl_prog = thl0(k) + thlten_sub * dt
           qt_prog  = max( qt0(k) + qtten_sub * dt, 1.e-12_r8 )
-          call conden(p0(k),thl_prog,qt_prog,thj,qvj,qlj,qij,qse,id_check)
+          call conden(p0(k),thl_prog,qt_prog,thj,qvj,qlj,qij,qse,id_check,ncnst) !only used for check.  No water tracers needed. -JN
           if( id_check .eq. 1 ) then
               id_exit = .true.
               go to 333
@@ -3479,6 +3983,16 @@ end subroutine uwshcu_readnl
           qiten_sink(k) = max( qiten_sub, - qi0(k) / dt ) ! For consistency with prognostic macrophysics scheme
           nlten_sink(k) = max( nlten_sub, - tr0(k,ixnumliq) / dt ) 
           niten_sink(k) = max( niten_sub, - tr0(k,ixnumice) / dt )
+          !*************
+          !Water tracers:
+          !*************
+          if(trace_water) then
+            do m=1,wtrc_nwset !Loop over water species
+              wtten_sink_liq(k,m) = max( wtlten_sub(m), - tr0(k,wtrc_iatype(m,iwtliq)) / dt )
+              wtten_sink_ice(k,m) = max( wtiten_sub(m), - tr0(k,wtrc_iatype(m,iwtice)) / dt )
+            end do
+          end if
+         !**************
        end do
 
        ! --------------------------------------------- !
@@ -3564,6 +4078,17 @@ end subroutine uwshcu_readnl
           ! dwten(k) = dwten(k) * umf(k) * g / dp0(k) ! [ kg/kg/s ]
           ! diten(k) = diten(k) * umf(k) * g / dp0(k) ! [ kg/kg/s ]
 
+          !*************
+          !Water tracers:
+          !*************
+          if(trace_water) then 
+            do m=1,wtrc_nwset !Loop over water species
+              wtdwten(k,m) = wtdwten(k,m) * 0.5_r8 * ( umf(k-1) + umf(k) ) * g / dp0(k) ! [ kg/kg/s ]
+              wtditen(k,m) = wtditen(k,m) * 0.5_r8 * ( umf(k-1) + umf(k) ) * g / dp0(k) ! [ kg/kg/s ]
+            end do
+          end if
+         !*************
+
           ! --------------------------------------------------------------------------- !
           ! 'qrten(k)','qsten(k)' : Production rate of rain and snow within the layer k !
           !     [ kg/kg/s ]         by cumulus expels of condensates to the environment.!         
@@ -3582,6 +4107,17 @@ end subroutine uwshcu_readnl
 
           qrten(k) = frc_rasn * dwten(k)
           qsten(k) = frc_rasn * diten(k) 
+
+          !*************
+         !Water tracers:
+         !*************
+          if(trace_water) then
+            do m=1,wtrc_nwset !<-loop over water species
+              wtrpten(k,m) = frc_rasn*wtdwten(k,m)
+              wtspten(k,m) = frc_rasn*wtditen(k,m)
+            end do
+          end if
+         !*************
  
           ! ----------------------------------------------------------------------- !         
           ! 'rainflx','snowflx' : Cumulative rain and snow flux integrated from the ! 
@@ -3628,6 +4164,16 @@ end subroutine uwshcu_readnl
           endif
           qtten(k) = ( qtflx(km1) - qtflx(k) ) * g / dp0(k)
 
+          !****************************************************************
+          !Calculate water tracer tendencies from moisture flux convergence:
+          !****************************************************************
+          if(trace_water) then
+            do m=1,wtrc_nwset !Loop over water species
+              wttotten(k,m) = ( wtflx(km1,m)-wtflx(k,m) ) * g /dp0(k)
+            end do
+          end if
+          !****************************************************************
+
           ! ---------------------------------------------------------------------------- !
           ! Compute condensate tendency, including reserved condensate                   !
           ! We assume that eventual detachment and detrainment occurs in kbup layer  due !
@@ -3643,16 +4189,48 @@ end subroutine uwshcu_readnl
               qiu_mid = 0._r8
               qlj     = 0._r8
               qij     = 0._r8
+              !*************
+              !Water tracers:
+              !************* 
+              if(trace_water) then
+                wlu_mid(:) = 0._r8
+                wiu_mid(:) = 0._r8
+                wtout(:,:) = 0._r8
+              end if
+             !*************
           elseif( k .eq. krel ) then 
-              call conden(prel,thlu(krel-1),qtu(krel-1),thj,qvj,qlj,qij,qse,id_check)
+            if(trace_water) then
+                wtout(:,:) = 0.0_r8
+                call conden(prel,thlu(krel-1),qtu(krel-1),thj,qvj,qlj,qij,qse,id_check,wtrc_nwset,&
+                                qv0=qtu(krel-1),tr0=wtu(krel-1,:),wtout=wtout)
+              else
+                call conden(prel,thlu(krel-1),qtu(krel-1),thj,qvj,qlj,qij,qse,id_check,ncnst)
+              end if
               if( id_check .eq. 1 ) then
                   exit_conden(i) = 1._r8
                   id_exit = .true.
                   go to 333
               endif
               qlubelow = qlj       
-              qiubelow = qij       
-              call conden(ps0(k),thlu(k),qtu(k),thj,qvj,qlj,qij,qse,id_check)
+              qiubelow = qij
+              !*************
+              !Water tracers:
+              !*************
+              if(trace_water) then
+                wlubelow(:) = 0._r8
+                wiubelow(:) = 0._r8
+                do m=1,wtrc_nwset !Loop over water species
+                  wlubelow(m) = wtout(m,2)
+                  wiubelow(m) = wtout(m,3)
+                end do
+              end if
+              !*************
+              if(trace_water) then
+                wtout(:,:) = 0.0_r8
+                call conden(ps0(k),thlu(k),qtu(k),thj,qvj,qlj,qij,qse,id_check,wtrc_nwset,qv0=qtu(k),tr0=wtu(k,:),wtout=wtout) 
+              else
+                call conden(ps0(k),thlu(k),qtu(k),thj,qvj,qlj,qij,qse,id_check,ncnst)
+              end if       
               if( id_check .eq. 1 ) then
                   exit_conden(i) = 1._r8
                   id_exit = .true.
@@ -3660,8 +4238,26 @@ end subroutine uwshcu_readnl
               end if
               qlu_mid = 0.5_r8 * ( qlubelow + qlj ) * ( prel - ps0(k) )/( ps0(k-1) - ps0(k) )
               qiu_mid = 0.5_r8 * ( qiubelow + qij ) * ( prel - ps0(k) )/( ps0(k-1) - ps0(k) )
+              !*************
+             !Water tracers:
+             !*************
+              if(trace_water) then
+                do m=1,wtrc_nwset !Loop over water species
+                  wlu_mid(m) = 0.5_r8 * ( wlubelow(m) + wtout(m,2) ) * &
+                                                   ( prel - ps0(k) )/( ps0(k-1) - ps0(k) )
+                  wiu_mid(m) = 0.5_r8 * ( wiubelow(m) + wtout(m,3) ) * &
+                                                   ( prel - ps0(k) )/( ps0(k-1) - ps0(k) )
+                end do
+              end if
+             !*************
           elseif( k .eq. kpen ) then 
-              call conden(ps0(k-1)+ppen,thlu_top,qtu_top,thj,qvj,qlj,qij,qse,id_check)
+            if(trace_water) then
+                wtout(:,:) = 0.0_r8
+                call conden(ps0(k-1)+ppen,thlu_top,qtu_top,thj,qvj,qlj,qij, &
+                            qse,id_check,wtrc_nwset,qv0=qtu_top,tr0=wtu_top(:),wtout=wtout)
+              else
+                call conden(ps0(k-1)+ppen,thlu_top,qtu_top,thj,qvj,qlj,qij,qse,id_check,ncnst)
+              end if
               if( id_check .eq. 1 ) then
                   exit_conden(i) = 1._r8
                   id_exit = .true.
@@ -3671,8 +4267,27 @@ end subroutine uwshcu_readnl
               qiu_mid = 0.5_r8 * ( qiubelow + qij ) * ( -ppen )        /( ps0(k-1) - ps0(k) )
               qlu_top = qlj
               qiu_top = qij
+              !*************
+             !Water tracers:
+             !*************
+              if(trace_water) then
+                do m=1,wtrc_nwset !Loop over water species
+                  wlu_mid(m) = 0.5_r8 * ( wlubelow(m) + wtout(m,2) )* &
+                                                   ( -ppen )/( ps0(k-1) - ps0(k) )
+                  wiu_mid(m) = 0.5_r8 * ( wiubelow(m) + wtout(m,3) )* &
+                                                   ( -ppen )/( ps0(k-1) - ps0(k) )
+                  wlu_top(m) = wtout(m,2)
+                  wiu_top(m) = wtout(m,3)
+                end do
+              end if
+             !*************
           else
-              call conden(ps0(k),thlu(k),qtu(k),thj,qvj,qlj,qij,qse,id_check)
+            if(trace_water) then
+                wtout(:,:) = 0.0_r8
+                call conden(ps0(k),thlu(k),qtu(k),thj,qvj,qlj,qij,qse,id_check,wtrc_nwset,qv0=qtu(k),tr0=wtu(k,:),wtout=wtout)
+              else
+                call conden(ps0(k),thlu(k),qtu(k),thj,qvj,qlj,qij,qse,id_check,ncnst)
+              end if
               if( id_check .eq. 1 ) then
                   exit_conden(i) = 1._r8
                   id_exit = .true.
@@ -3680,14 +4295,46 @@ end subroutine uwshcu_readnl
               end if
               qlu_mid = 0.5_r8 * ( qlubelow + qlj )
               qiu_mid = 0.5_r8 * ( qiubelow + qij )
+              !*************
+             !Water tracers:
+             !*************
+              if(trace_water) then
+                do m=1,wtrc_nwset
+                  wlu_mid(m) = 0.5_r8 * ( wlubelow(m) + wtout(m,2) )
+                  wiu_mid(m) = 0.5_r8 * ( wiubelow(m) + wtout(m,3) )
+                end do
+              end if
+             !*************
           endif
           qlubelow = qlj       
-          qiubelow = qij       
+          qiubelow = qij    
+
+          !*************
+         !Water tracers:
+         !*************
+          if(trace_water) then
+            wlubelow(:) = 0._r8
+            wiubelow(:) = 0._r8
+            do m=1,wtrc_nwset
+              wlubelow(m) = wtout(m,2)
+              wiubelow(m) = wtout(m,3)
+            end do
+          end if
+         !*************   
 
           ! 1. Sustained Precipitation
 
           qc_l(k) = ( 1._r8 - frc_rasn ) * dwten(k) ! [ kg/kg/s ]
           qc_i(k) = ( 1._r8 - frc_rasn ) * diten(k) ! [ kg/kg/s ]
+
+          !*************
+          !Water tracers:
+          !*************
+          do m=1,wtrc_nwset
+            wtqc_liq(k,m) = ( 1._r8 - frc_rasn ) * wtdwten(k,m) ! [ kg/kg/s ]
+            wtqc_ice(k,m) = ( 1._r8 - frc_rasn ) * wtditen(k,m)
+          end do
+          !*************
 
           ! 2. Detrained Condensate
 
@@ -3699,11 +4346,33 @@ end subroutine uwshcu_readnl
             ! Below 'nc_lm', 'nc_im' should be used only when frc_rasn = 1.
               nc_lm   =         - g * 0.5_r8 * ( umf(k-1) + umf(k) ) * fdr(k) * tr0(k,ixnumliq)  
               nc_im   =         - g * 0.5_r8 * ( umf(k-1) + umf(k) ) * fdr(k) * tr0(k,ixnumice)
+              !*************
+             !Water tracers:
+             !*************
+              if(trace_water) then
+                do m=1,wtrc_nwset
+                  wtqc_liq(k,m) = wtqc_liq(k,m)+ g * 0.5_r8 * &
+                                              ( umf(k-1) + umf(k) ) * fdr(k) * wlu_mid(m)         ! [ kg/kg/s ]
+                  wtqc_ice(k,m) = wtqc_ice(k,m)+ g * 0.5_r8 * &
+                                              ( umf(k-1) + umf(k) ) * fdr(k) * wiu_mid(m)         ! [ kg/kg/s ]
+                  wtqcm_liq(m)= - g * 0.5_r8 * ( umf(k-1) + umf(k) ) * fdr(k) * tr0(k,wtrc_iatype(m,iwtliq))
+                  wtqcm_ice(m)= - g * 0.5_r8 * ( umf(k-1) + umf(k) ) * fdr(k) * tr0(k,wtrc_iatype(m,iwtice))
+                end do
+              end if
+             !*************
           else
               qc_lm   = 0._r8
               qc_im   = 0._r8
               nc_lm   = 0._r8
               nc_im   = 0._r8
+              !*************
+             !Water tracers:
+             !*************
+              if(trace_water) then
+                wtqcm_liq(:)= 0._r8
+                wtqcm_ice(:)= 0._r8
+              end if
+             !*************
           endif
 
           ! 3. Detached Updraft 
@@ -3715,13 +4384,31 @@ end subroutine uwshcu_readnl
               qc_im   = qc_im   - g * umf(k) * qi0(k)  / ( ps0(k-1) - ps0(k) ) ! [ kg/kg/s ]
               nc_lm   = nc_lm   - g * umf(k) * tr0(k,ixnumliq)  / ( ps0(k-1) - ps0(k) ) ! [ kg/kg/s ]
               nc_im   = nc_im   - g * umf(k) * tr0(k,ixnumice)  / ( ps0(k-1) - ps0(k) ) ! [ kg/kg/s ]
+              !*************
+             !Water tracers:
+             !*************
+             if(trace_water) then
+                do m=1,wtrc_nwset
+                  wtqc_liq(k,m) = wtqc_liq(k,m) + g * umf(k) * wtout(m,2) / ( ps0(k-1) - ps0(k) ) ! [ kg/kg/s ]
+                  wtqc_ice(k,m) = wtqc_ice(k,m) + g * umf(k) * wtout(m,3) / ( ps0(k-1) - ps0(k) ) ! [ kg/kg/s ]
+                  wtqcm_liq(m)  = wtqcm_liq(m) - g * umf(k) * tr0(k,wtrc_iatype(m,iwtliq))  / ( ps0(k-1) - ps0(k) ) ! [ kg/kg/s ]
+                  wtqcm_ice(m)  = wtqcm_ice(m) - g * umf(k) * tr0(k,wtrc_iatype(m,iwtice))  / ( ps0(k-1) - ps0(k) ) ! [ kg/kg/s ]
+                end do
+              end if
+              !*************
           endif 
 
           ! 4. Cumulative Penetrative entrainment detrained in the 'kbup' layer
           !    Explicitly compute the properties detrained penetrative entrained airs in k = kbup layer.
 
           if( k .eq. kbup ) then
-              call conden(p0(k),thlu_emf(k),qtu_emf(k),thj,qvj,ql_emf_kbup,qi_emf_kbup,qse,id_check)
+            if(trace_water) then
+                wtout_emf_kbup(:,:) = 0.0_r8 !initalize variable (needed to prevent random tracer ice error) - JN
+                call conden(p0(k),thlu_emf(k),qtu_emf(k),thj,qvj,ql_emf_kbup,qi_emf_kbup,qse,id_check,wtrc_nwset,&
+                            qv0=qtu_emf(k),tr0=wtu_emf(k,:),wtout=wtout_emf_kbup)
+              else
+                call conden(p0(k),thlu_emf(k),qtu_emf(k),thj,qvj,ql_emf_kbup,qi_emf_kbup,qse,id_check,ncnst)
+              end if
               if( id_check .eq. 1 ) then
                   id_exit = .true.
                   go to 333
@@ -3740,10 +4427,33 @@ end subroutine uwshcu_readnl
               qc_im   = qc_im   - g * emf(k) * ( qi_emf_kbup - qi0(k) ) / ( ps0(k-1) - ps0(k) ) ! [ kg/kg/s ]
               nc_lm   = nc_lm   - g * emf(k) * ( nl_emf_kbup - tr0(k,ixnumliq) ) / ( ps0(k-1) - ps0(k) ) ! [ kg/kg/s ]
               nc_im   = nc_im   - g * emf(k) * ( ni_emf_kbup - tr0(k,ixnumice) ) / ( ps0(k-1) - ps0(k) ) ! [ kg/kg/s ]
+              !*************
+             !Water tracers:
+             !*************
+              if(trace_water) then
+                do m=1,wtrc_nwset
+                  wtqcm_liq(m) = wtqcm_liq(m)  - g * emf(k) * ( wtout_emf_kbup(m,2) - tr0(k,wtrc_iatype(m,iwtliq)) ) / &
+                                             ( ps0(k-1) - ps0(k) ) ! [ kg/kg/s ]
+                  wtqcm_ice(m) = wtqcm_ice(m)  - g * emf(k) * ( wtout_emf_kbup(m,3) - tr0(k,wtrc_iatype(m,iwtice)) ) / &
+                                             ( ps0(k-1) - ps0(k) ) ! [ kg/kg/s ]
+                end do
+              end if
+             !*************
           endif 
 
           qlten_det   = qc_l(k) + qc_lm
           qiten_det   = qc_i(k) + qc_im
+
+          !*************
+          !Water tracers:
+          !*************
+          if(trace_water) then
+            do m=1,wtrc_nwset
+              wtlten_det(k,m) = wtqc_liq(k,m) + wtqcm_liq(m)
+              wtiten_det(k,m) = wtqc_ice(k,m) + wtqcm_ice(m)
+            end do
+          end if
+         !************* 
 
           ! --------------------------------------------------------------------------------- !
           ! 'qlten(k)','qiten(k)','qvten(k)','sten(k)'                                        !
@@ -3757,23 +4467,88 @@ end subroutine uwshcu_readnl
                   qc_i(k) = 0._r8 
                   qlten(k) = frc_rasn * dwten(k) + qlten_sink(k) + qlten_det
                   qiten(k) = frc_rasn * diten(k) + qiten_sink(k) + qiten_det
+                  !*************
+                  !Water tracers:
+                  !*************
+                  if(trace_water) then   
+                    wtqc_liq(k,:) = 0._r8 !Set "reserved" liquid to zero?
+                    wtqc_ice(k,:) = 0._r8
+                    do m=1,wtrc_nwset
+                      trten(k,wtrc_iatype(m,iwtliq)) = frc_rasn * wtdwten(k,m) + &
+                                                       wtten_sink_liq(k,m) + wtlten_det(k,m)
+                      trten(k,wtrc_iatype(m,iwtice)) = frc_rasn * wtditen(k,m) + &
+                                                       wtten_sink_ice(k,m) + wtiten_det(k,m)
+                    end do
+                  end if
+                  !*************
               else 
-                  qlten(k) = qc_l(k) + frc_rasn * dwten(k) + ( max( 0._r8, ql0(k) + ( qc_lm + qlten_sink(k) ) * dt ) - ql0(k) ) / dt
-                  qiten(k) = qc_i(k) + frc_rasn * diten(k) + ( max( 0._r8, qi0(k) + ( qc_im + qiten_sink(k) ) * dt ) - qi0(k) ) / dt
+                  qlten(k) = qc_l(k) + frc_rasn * dwten(k) + ( max( 0._r8, ql0(k) + &
+                 ( qc_lm + qlten_sink(k) ) * dt ) - ql0(k) ) / dt
+                  qiten(k) = qc_i(k) + frc_rasn * diten(k) + ( max( 0._r8, qi0(k) + &
+                  ( qc_im + qiten_sink(k) ) * dt ) - qi0(k) ) / dt
                   trten(k,ixnumliq) = max( nc_lm + nlten_sink(k), - tr0(k,ixnumliq) / dt )
                   trten(k,ixnumice) = max( nc_im + niten_sink(k), - tr0(k,ixnumice) / dt )
+                  !*************
+                  !water tracers:
+                  !*************
+                  if(trace_water) then
+                    do m=1,wtrc_nwset
+                      trten(k,wtrc_iatype(m,iwtliq)) = wtqc_liq(k,m) + frc_rasn * wtdwten(k,m) + &
+                                                       ( max( 0._r8, tr0(k,wtrc_iatype(m,iwtliq)) + ( wtqcm_liq(m) + &
+                                                       wtten_sink_liq(k,m) ) * dt ) - &
+                                                       tr0(k,wtrc_iatype(m,iwtliq)) ) / dt
+                      trten(k,wtrc_iatype(m,iwtice)) = wtqc_ice(k,m) + frc_rasn * wtditen(k,m) + &
+                                                       ( max( 0._r8, tr0(k,wtrc_iatype(m,iwtice)) + ( wtqcm_ice(m) + &
+                                                       wtten_sink_ice(k,m) ) * dt ) - &
+                                                       tr0(k,wtrc_iatype(m,iwtice)) ) / dt
+                    end do
+                  end if
+                  !*************
               endif
           else
               if( use_unicondet ) then
                   qc_l(k) = 0._r8
                   qc_i(k) = 0._r8 
+                  !water tracers:
+                 !*************
+                  if(trace_water) then
+                    wtqc_liq(k,:) = 0._r8
+                    wtqc_ice(k,:) = 0._r8
+                  end if
+                 !*************
               endif                      
               qlten(k) = dwten(k) + ( qtten(k) - dwten(k) - diten(k) ) * ( ql0(k) / qt0(k) )
               qiten(k) = diten(k) + ( qtten(k) - dwten(k) - diten(k) ) * ( qi0(k) / qt0(k) )
+              !*************
+              !water tracers:
+              !*************
+              
+              !NOTE:  Not sure if summing up the tendencies is the same as calculating qtten for
+              !water tracers.  If this section of code is found to be producing bad values, then
+              !this summation is the most-likely cause.
+              if(trace_water) then
+                do m=1,wtrc_nwset
+                  trten(k,wtrc_iatype(m,iwtliq)) = wtdwten(k,m) + ( wttotten(k,m) - wtdwten(k,m) - &
+                                                   wtditen(k,m) ) * (tr0(k,wtrc_iatype(m,iwtliq)) / wt0(k,m))
+                  trten(k,wtrc_iatype(m,iwtice)) = wtditen(k,m) + ( wttotten(k,m) - wtdwten(k,m) - &
+                                                   wtditen(k,m) ) * (tr0(k,wtrc_iatype(m,iwtice)) / wt0(k,m))
+                end do
+              end if
+              !*************
           endif
 
           qvten(k) = qtten(k) - qlten(k) - qiten(k)
           sten(k)  = slten(k) + xlv * qlten(k) + xls * qiten(k)
+
+          !*************************************
+          !Calculate water tracer vapor tendency:
+          !*************************************
+          if(trace_water) then
+            do m=1,wtrc_nwset
+              trten(k,wtrc_iatype(m,iwtvap)) = wttotten(k,m) - trten(k,wtrc_iatype(m,iwtliq)) - trten(k,wtrc_iatype(m,iwtice))
+            end do
+          end if
+          !**************************************
 
           ! -------------------------------------------------------------------------- !
           ! 'rliq' : Verticall-integrated 'suspended cloud condensate'                 !
@@ -3817,6 +4592,12 @@ end subroutine uwshcu_readnl
        flxsnow(0:mkx) = 0._r8
        ntraprd(:mkx)  = 0._r8
        ntsnprd(:mkx)  = 0._r8
+       !Water tracers:
+      !*************
+       if(trace_water) then
+        wtflxrn(0:mkx,:) = 0._r8
+        wtflxsn(0:mkx,:) = 0._r8
+      end if
 
        do k = mkx, 1, -1  ! 'k' is a layer index : 'mkx'('1') is the top ('bottom') layer
           
@@ -3926,10 +4707,84 @@ end subroutine uwshcu_readnl
           sten(k)  = sten(k) - xlv*evprain  - xls*evpsnow - (xls-xlv)*snowmlt
           slten(k) = sten(k) - xlv*qlten(k) - xls*qiten(k)
 
-        !  slten(k) = slten(k) + xlv * ntraprd(k) + xls * ntsnprd(k)         
-        !  sten(k)  = slten(k) + xlv * qlten(k)   + xls * qiten(k)
+          !  slten(k) = slten(k) + xlv * ntraprd(k) + xls * ntsnprd(k)         
+          !  sten(k)  = slten(k) + xlv * qlten(k)   + xls * qiten(k)
+  
+          !***************************************************
+          !Water tracers precipitation re-evaporation
+          !***************************************************
+           if(trace_water) then
+   
+               !NOTE:  The precipitation evaporation code was taken almost directly
+               !from the wtrc_precip_evap subroutine.  So, if there is a way to call
+               !the routine from here, it might reduce code redundancy. - JN
+      
+               !phi value given in Bony et. al., 2008:
+                phi = 0.9_r8
+      
+               !Calculate layer thickness:
+                dz(k) = zs0(k) - zs0(k-1)
+      
+                do m=1,wtrc_nwset !Loop over water species
+      
+                 !Calculate precipitation and water vapor ratios:
+                  if(k .eq. mkx) then !At top of layer?
+                    ! Rr = wtrc_ratio(iwspec(wtrc_iatype(m,iwtliq)),wtrpten(k,m),wtrpten(k,1)) !Use rain production
+                    Rr = wtrc_ratio(m,wtrpten(k,m),wtrpten(k,1)) !Use rain production
+                    ! Rs = wtrc_ratio(iwspec(wtrc_iatype(m,iwtice)),wtspten(k,m),wtspten(k,1)) !Use snow production
+                    Rs = wtrc_ratio(m,wtspten(k,m),wtspten(k,1)) !Use snow production
+                  else
+                    if(wtflxrn(k,1) .ne. 0._r8) then !is there actual rain here?
+                      ! Rr = wtrc_ratio(iwspec(wtrc_iatype(m,iwtliq)),wtflxrn(k,m),wtflxrn(k,1))
+                      Rr = wtrc_ratio(m,wtflxrn(k,m),wtflxrn(k,1))
+                    else !If not, just use local production.
+                      ! Rr = wtrc_ratio(iwspec(wtrc_iatype(m,iwtliq)),wtrpten(k,m),wtrpten(k,1)) !Use rain production
+                      Rr = wtrc_ratio(m,wtrpten(k,m),wtrpten(k,1)) !Use rain production
+                    end if
+                    if(wtflxsn(k,1) .ne. 0._r8) then !is there actual snow here?
+                      ! Rs = wtrc_ratio(iwspec(wtrc_iatype(m,iwtice)),wtflxsn(k,m),wtflxsn(k,1))
+                      Rs = wtrc_ratio(m,wtflxsn(k,m),wtflxsn(k,1))
+                    else
+                      ! Rs = wtrc_ratio(iwspec(wtrc_iatype(m,iwtice)),wtspten(k,m),wtspten(k,1)) !Use snow production
+                      Rs = wtrc_ratio(m,wtspten(k,m),wtspten(k,1)) !Use snow production
+                    end if
+                  end if
+      
+                 !Water tracer vapor ratio:
+                  ! Rv = wtrc_ratio(iwspec(wtrc_iatype(m,iwtvap)),tr0(k,wtrc_iatype(m,iwtvap)),tr0(k,wtrc_iatype(1,iwtvap)))
+                  Rv = wtrc_ratio(m,tr0(k,wtrc_iatype(m,iwtvap)),tr0(k,wtrc_iatype(1,iwtvap)))
+      
 
-       end do
+                    wtevp(k,m) = evprain*Rr    !Keep tracer proportional
+      
+                 !Calculate snow sublimation (No fractionation occurs during sublimation):
+                  wtsub(k,m) = evpsnow*Rs
+      
+                 !Calculate snow melt
+                  if( t0(k) .gt. 273.16_r8 ) then
+                    wtsnwmlt = max( 0._r8, wtflxsn(k,m) * g / dp0(k) )
+                  else
+                    wtsnwmlt = 0._r8
+                  endif
+      
+                 !Modify precipitation:
+                  wtflxrn(k-1,m) = wtflxrn(k,m) + (wtrpten(k,m) - wtevp(k,m) + wtsnwmlt) * dp0(k) / g
+                  wtflxsn(k-1,m) = wtflxsn(k,m) + (wtspten(k,m) - wtsub(k,m) - wtsnwmlt) * dp0(k) / g
+      
+                 !Prevent negative precipitation:
+                  wtflxrn(k-1,m) = max(wtflxrn(k-1,m), 0._r8)
+                  wtflxsn(k-1,m) = max(wtflxsn(k-1,m), 0._r8)
+       
+                 !Modify tendencies:
+                  trten(k,wtrc_iatype(m,iwtliq)) = trten(k,wtrc_iatype(m,iwtliq)) - wtrpten(k,m)
+                  trten(k,wtrc_iatype(m,iwtice)) = trten(k,wtrc_iatype(m,iwtice)) - wtspten(k,m)
+                  trten(k,wtrc_iatype(m,iwtvap)) = trten(k,wtrc_iatype(m,iwtvap)) + wtevp(k,m) + wtsub(k,m)
+      
+                end do !Water species
+              end if   !water tracers?
+              !*****************************************************************
+
+       end do !vertical levels (k)
 
        ! ------------------------------------------------------------- !
        ! Calculate final surface flux of precipitation, rain, and snow !
@@ -3937,7 +4792,26 @@ end subroutine uwshcu_readnl
        ! ------------------------------------------------------------- !
 
        precip  = ( flxrain(0) + flxsnow(0) ) / 1000._r8
-       snow    =   flxsnow(0) / 1000._r8       
+       snow    =   flxsnow(0) / 1000._r8   
+
+       !*************
+       !Water tracers
+       !*************
+       if(trace_water) then
+        do m=1,wtrc_nwset
+          wtprec(m) = ( wtflxrn(0,m) + wtflxsn(0,m) ) / 1000._r8
+          wtsnow(m) = wtflxsn(0,m) / 1000._r8
+          !----------
+          !Mass fixer:
+          !----------
+          if((m .gt. 1) .and. (wtprec(m) .gt. 2._r8*wtprec(1))) then
+            if(wtprec(1) .gt. 1e-18_r8) &
+            write(*,*) 'ERROR:  Isotopic shallow-conv precip error!',wtprec(m),wtprec(1),wtsnow(m),wtsnow(1),m
+          end if
+          !-----------
+        end do
+      end if
+      !*************
 
        ! --------------------------------------------------------------------------- !
        ! Until now, all the calculations are done completely in this shallow cumulus !
@@ -3984,6 +4858,18 @@ end subroutine uwshcu_readnl
           ! that there should be no change of 'qvten(k)'.                          !
           ! ---------------------------------------------------------------------- !
           sten(k)  = sten(k)  - ( xls - xlv ) * qc_i(k)
+
+          !***************
+         !Water tracers:
+         !***************
+          if(trace_water) then
+            do m=1,wtrc_nwset  !Loop over water species
+              trten(k,wtrc_iatype(m,iwtliq)) = trten(k,wtrc_iatype(m,iwtliq))-wtqc_liq(k,m)
+              trten(k,wtrc_iatype(m,iwtice)) = trten(k,wtrc_iatype(m,iwtice))-wtqc_ice(k,m)
+            end do
+          end if
+         !***************
+
        end do
 
        ! --------------------------------------------------------------- !
@@ -4002,8 +4888,24 @@ end subroutine uwshcu_readnl
         ql0_star(:mkx) = ql0(:mkx) + qlten(:mkx) * dt
         qi0_star(:mkx) = qi0(:mkx) + qiten(:mkx) * dt
         s0_star(:mkx)  =  s0(:mkx) +  sten(:mkx) * dt
-        call positive_moisture_single( xlv, xls, mkx, dt, qmin(1), qmin(ixcldliq), qmin(ixcldice), &
-             dp0, qv0_star, ql0_star, qi0_star, s0_star, qvten, qlten, qiten, sten )
+        !*************
+        !water tracers:
+        !*************
+        if(trace_water) then
+            wt0_star(:,:,:) = 0._r8 !initalize variable
+            do m=1, wtrc_nwset !Loop over water species
+              wt0_star(:mkx,m,1) = tr0(:mkx,wtrc_iatype(m,iwtvap)) + trten(:mkx,wtrc_iatype(m,iwtvap)) * dt
+              wt0_star(:mkx,m,2) = tr0(:mkx,wtrc_iatype(m,iwtliq)) + trten(:mkx,wtrc_iatype(m,iwtliq)) * dt
+              wt0_star(:mkx,m,3) = tr0(:mkx,wtrc_iatype(m,iwtice)) + trten(:mkx,wtrc_iatype(m,iwtice)) * dt
+            end do
+            call positive_moisture_single( xlv, xls, mkx, dt, qmin(1), qmin(ixcldliq), &
+                                           qmin(ixcldice), dp0, qv0_star, ql0_star, qi0_star, s0_star, &
+                                           qvten, qlten, qiten, sten, ncnst, wtr=wt0_star, wtten=trten )
+          else
+            call positive_moisture_single( xlv, xls, mkx, dt, qmin(1), qmin(ixcldliq), qmin(ixcldice), &
+                 dp0, qv0_star, ql0_star, qi0_star, s0_star, qvten, qlten, qiten, sten, ncnst )
+          end if !water tracers
+          !************
         qtten(:mkx)    = qvten(:mkx) + qlten(:mkx) + qiten(:mkx)
         slten(:mkx)    = sten(:mkx)  - xlv * qlten(:mkx) - xls * qiten(:mkx)
 
@@ -4013,7 +4915,9 @@ end subroutine uwshcu_readnl
 
        do m = 4, ncnst
 
-       if( m .ne. ixnumliq .and. m .ne. ixnumice ) then
+        !Do not modify water tracers here.
+
+       if( m .ne. ixnumliq .and. m .ne. ixnumice .and. (.not. wtrc_is_wtrc(m))) then
 
           trmin = qmin(m)
           trflx_d(0:mkx) = 0._r8
@@ -4065,7 +4969,9 @@ end subroutine uwshcu_readnl
        ! reproduce in-cloud properties as shown in the output analysis.   !
        ! ---------------------------------------------------------------- ! 
  
-       call conden(prel,thlu(krel-1),qtu(krel-1),thj,qvj,qlj,qij,qse,id_check)
+       !NOTE:  This section of code is solely for diagnostic output, which doesn't impact water tracers. - JN
+ 
+       call conden(prel,thlu(krel-1),qtu(krel-1),thj,qvj,qlj,qij,qse,id_check,ncnst)
        if( id_check .eq. 1 ) then
            exit_conden(i) = 1._r8
            id_exit = .true.
@@ -4089,9 +4995,9 @@ end subroutine uwshcu_readnl
           ! which explicitly considered zero or non-zero 'fer(kpen)'.          !
           ! ------------------------------------------------------------------ ! 
           if( k .eq. kpen ) then 
-              call conden(ps0(k-1)+ppen,thlu_top,qtu_top,thj,qvj,qlj,qij,qse,id_check)
+              call conden(ps0(k-1)+ppen,thlu_top,qtu_top,thj,qvj,qlj,qij,qse,id_check,ncnst)
           else
-              call conden(ps0(k),thlu(k),qtu(k),thj,qvj,qlj,qij,qse,id_check)
+              call conden(ps0(k),thlu(k),qtu(k),thj,qvj,qlj,qij,qse,id_check,ncnst)
           endif
           if( id_check .eq. 1 ) then
               exit_conden(i) = 1._r8
@@ -4159,7 +5065,7 @@ end subroutine uwshcu_readnl
           qt0_s(:mkx)           = qv0_s(:mkx) + ql0_s(:mkx) + qi0_s(:mkx)
           t0_s(:mkx)            = t0(:mkx)  +  sten(:mkx) * dt / cp
           do m = 1, ncnst
-             tr0_s(:mkx,m)      = tr0(:mkx,m) + trten(:mkx,m) * dt
+             tr0_s(:mkx,m)      = tr0(:mkx,m) + trten(:mkx,m) * dt !<-water tracers handled here.
           enddo
 
           umf_s(0:mkx)          = umf(0:mkx)
@@ -4245,18 +5151,30 @@ end subroutine uwshcu_readnl
           bogbot_arr_s(:mkx)    = bogbot_arr(:mkx)
           bogtop_arr_s(:mkx)    = bogtop_arr(:mkx)
 
-          do m = 1, ncnst
+          do m = 1, ncnst  !<-water tracers handled here:
              trten_s(:mkx,m)    = trten(:mkx,m)
              trflx_s(0:mkx,m)   = trflx(0:mkx,m)
              tru_s(0:mkx,m)     = tru(0:mkx,m)
              tru_emf_s(0:mkx,m) = tru_emf(0:mkx,m)
           enddo
 
+          !*************
+          !Water tracers:
+          !*************
+          if(trace_water) then
+            wtqc_liq_s(:mkx,:) = wtqc_liq(:mkx,:)
+            wtqc_ice_s(:mkx,:) = wtqc_ice(:mkx,:)
+            wtprec_s(:)        = wtprec(:)
+            wtsnow_s(:)        = wtsnow(:)
+          end if
+
           ! ----------------------------------------------------------------------------- ! 
           ! Recalculate environmental variables for new cin calculation at "iter_cin = 2" ! 
           ! using the updated state variables. Perform only for variables necessary  for  !
           ! the new cin calculation.                                                      !
           ! ----------------------------------------------------------------------------- !
+          
+          !NOTE:  Water tracers not needed for CIN calculation. -JN
           
           qv0(:mkx)   = qv0_s(:mkx)
           ql0(:mkx)   = ql0_s(:mkx)
@@ -4280,7 +5198,7 @@ end subroutine uwshcu_readnl
 
              thl0bot = thl0(k) + ssthl0(k) * ( ps0(k-1) - p0(k) )
              qt0bot  = qt0(k)  + ssqt0(k)  * ( ps0(k-1) - p0(k) )
-             call conden(ps0(k-1),thl0bot,qt0bot,thj,qvj,qlj,qij,qse,id_check)
+             call conden(ps0(k-1),thl0bot,qt0bot,thj,qvj,qlj,qij,qse,id_check,ncnst)
              if( id_check .eq. 1 ) then
                  exit_conden(i) = 1._r8
                  id_exit = .true.
@@ -4291,7 +5209,7 @@ end subroutine uwshcu_readnl
           
              thl0top = thl0(k) + ssthl0(k) * ( ps0(k) - p0(k) )
              qt0top  =  qt0(k) + ssqt0(k)  * ( ps0(k) - p0(k) )
-             call conden(ps0(k),thl0top,qt0top,thj,qvj,qlj,qij,qse,id_check)
+             call conden(ps0(k),thl0top,qt0top,thj,qvj,qlj,qij,qse,id_check,ncnst)
              if( id_check .eq. 1 ) then
                  exit_conden(i) = 1._r8
                  id_exit = .true.
@@ -4338,9 +5256,22 @@ end subroutine uwshcu_readnl
      cnt_out(i)                   = cnt
      cnb_out(i)                   = cnb
 
-     do m = 1, ncnst
+     do m = 1, ncnst !<- Water tracers handled here. -JN
         trten_out(i,:mkx,m)       = trten(:mkx,m)
      enddo
+
+     !*************
+    !Water tracers:
+    !*************
+     if(trace_water) then
+        do m=1, wtrc_nwset  
+          wtqc_out(i,:mkx,wtrc_iatype(m,iwtliq)) = wtqc_liq(:mkx,m)
+          wtqc_out(i,:mkx,wtrc_iatype(m,iwtice)) = wtqc_ice(:mkx,m)
+          wtprec_out(i,wtrc_iatype(m,iwtvap))    = wtprec(m)
+          wtsnow_out(i,wtrc_iatype(m,iwtvap))    = wtsnow(m)
+        end do
+      end if
+     !*************
   
      ! ------------------------------------------------- !
      ! Below are specific diagnostic output for detailed !
@@ -4405,10 +5336,10 @@ end subroutine uwshcu_readnl
      bogbot_arr_out(i,mkx:1:-1)   = bogbot_arr(:mkx)
      bogtop_arr_out(i,mkx:1:-1)   = bogtop_arr(:mkx)
 
-     do m = 1, ncnst
+     do m = 1, ncnst !<-water tracers handled here?
         trflx_out(i,mkx:0:-1,m)   = trflx(0:mkx,m)  
         tru_out(i,mkx:0:-1,m)     = tru(0:mkx,m)
-        tru_emf_out(i,mkx:0:-1,m) = tru_emf(0:mkx,m)
+        tru_emf_out(i,mkx:0:-1,m) = tru_emf(0:mkx,m)   
      enddo
 
  333 if(id_exit) then ! Exit without cumulus convection
@@ -4503,10 +5434,14 @@ end subroutine uwshcu_readnl
      bogtop_arr_out(i,mkx:1:-1)   = 0._r8    
 
      do m = 1, ncnst
-        trten_out(i,:mkx,m)       = 0._r8
+        trten_out(i,:mkx,m)       = 0._r8 !<- water tracers handled here - JN
         trflx_out(i,mkx:0:-1,m)   = 0._r8  
         tru_out(i,mkx:0:-1,m)     = 0._r8
         tru_emf_out(i,mkx:0:-1,m) = 0._r8
+                !Water tracers:
+        wtqc_out(i,:mkx,m)  = 0._r8
+        wtprec_out(i,m)     = 0._r8
+        wtsnow_out(i,m)     = 0._r8
      enddo
 
      end if
@@ -4670,8 +5605,13 @@ end subroutine uwshcu_readnl
     return
   end function single_cin   
 
-
-  subroutine conden(p,thl,qt,th,qv,ql,qi,rvls,id_check)
+  subroutine conden(p,thl,qt,th,qv,ql,qi,rvls,id_check,ncnst,qv0,tr0,wtout)
+    ! --------------------------- !
+   !water tracer use statements
+  ! --------------------------- !
+    use water_tracer_vars, only : trace_water, wisotope, wtrc_iatype, iwspec, wtrc_nwset
+    use water_tracers,     only : wtrc_ratio, wtrc_get_alpha
+    use water_types,       only : iwtvap, iwtliq, iwtice
   ! --------------------------------------------------------------------- !
   ! Calculate thermodynamic properties from a given set of ( p, thl, qt ) !
   ! --------------------------------------------------------------------- !
@@ -4685,18 +5625,41 @@ end subroutine uwshcu_readnl
     real(r8), intent(out) :: qi
     real(r8), intent(out) :: rvls
     integer , intent(out) :: id_check
+
+        !Needed for water tracer output:
+    !------------------------------
+    integer,  intent(in)              :: ncnst               !number of constituents for ratio input
+    real(r8), intent(in), optional    :: qv0                 !input bulk-water used for ratio calculations
+    real(r8), intent(in), optional    :: tr0(ncnst)          !environmental tracers pre-condensation
+    real(r8), intent(inout), optional :: wtout(wtrc_nwset,3) !water tracer output (1=vapor, 2=liquid, 3=ice)
+    !------------------------------
+
     real(r8)              :: tc,temps,t
     real(r8)              :: leff, nu, qc
     integer               :: iteration
     real(r8)              :: es              ! Saturation vapor pressure
     real(r8)              :: qs              ! Saturation spec. humidity
 
+    !Needed for water tracer calculations:
+    !************************************
+    real(r8)             :: Rv0  !Initial water tracer vapor ratio
+    real(r8)             :: Rv   !Final water tracer vapor ratio
+    real(r8)             :: Rl   !Final water tracer condensate (liquid) ratio
+    real(r8)             :: Rve  !Final water tracer vapor ratio for equilibrium
+    real(r8)             :: Rle  !Final water tracer liquid ratio for equilibrium
+    real(r8)             :: Rvr  !Final water tracer vapor ratio for Rayleigh
+    real(r8)             :: Rlr  !Final water tracer liquid ratio for Rayleigh
+    real(r8)             :: ae   !Equilibrium fractionation factor
+    real(r8)             :: fv   !Fraction of vapor left after condensation.
+    real(r8)             :: rh   !relative humidity
+    real(r8)             :: tavg !average temperature during phase change.
+    integer              :: m    !Loop control variable
+    !************************************
 
     tc   = thl*exnf(p)
   ! Modification : In order to be compatible with the dlf treatment in stratiform.F90,
   !                we may use ( 268.15, 238.15 ) with 30K ramping instead of 20 K,
   !                in computing ice fraction below. 
-  !                Note that 'cldfrc_fice' uses ( 243.15, 263.15 ) with 20K ramping for stratus.
     nu   = max(min((268._r8 - tc)/20._r8,1.0_r8),0.0_r8)  ! Fraction of ice in the condensate. 
     leff = (1._r8 - nu)*xlv + nu*xls                      ! This is an estimate that hopefully speeds convergence
 
@@ -4733,7 +5696,90 @@ end subroutine uwshcu_readnl
         else
             id_check = 0
         end if
-    end if
+
+        !**************************************************
+       !Water tracer/Isotope code:
+       !**************************************************
+        if(trace_water .and. present(wtout)) then
+
+            !NOTE:  The current temperature used to calculate the fractionation
+            !factors is simply the average between the initial temperature and
+            !the temperature post-condensation.  If this subroutine is producing
+            !incorrect isotope values, then this could possibly be the reason. - JN
+  
+            !NOTE:  Might need to modify temperature cutoffs later, especially for mixed-phase clouds. - JN
+            !NOTE:  May need to compare Bony's "effective" fractionation factor for ice against using
+            !the standard get_alpha call with kinetic fractionation allowed. - JN
+  
+           !------------
+           !Physics note
+           !------------
+           !This code currently assumes that all liquid forms directly from vapor,
+           !and that all ice also forms directly from vapor.  However, in reality
+           !this is not always the case, as ice can form via freezing liquid, and
+           !liquid can form from melting ice.  Eventually a choice should be made
+           !as to which microphysics assumption produces the most realistic isotopic
+           !values, but it might just need to be noted that this assumption
+           !encompasses the fact the convective parameterizations in CAM are limited,
+           !and thus will simply be unable to resolve these details. - JN.
+           !------------------
+  
+           !Calculate the average temperature during the phase-change:
+           tavg = (tc + temps)/2._r8
+  
+           !Calculate Isotope ratios (from Bony et. al., 2008):
+           do m=1,wtrc_nwset                       !Loop over isotopes:
+             if(ncnst > wtrc_nwset) then           !Are the input arrays dimensioned for all consitutents?
+              ! Rv0 = wtrc_ratio(iwspec(wtrc_iatype(m,iwtvap)),tr0(wtrc_iatype(m,iwtvap)),tr0(wtrc_iatype(1,iwtvap)))
+              Rv0 = wtrc_ratio(m,tr0(wtrc_iatype(m,iwtvap)),tr0(wtrc_iatype(1,iwtvap)))
+            else !Are the input arrays dimensioned just for water tracers?
+              ! Rv0 = wtrc_ratio(iwspec(wtrc_iatype(m,iwtvap)),tr0(m),tr0(1))
+              Rv0 = wtrc_ratio(m,tr0(m),tr0(1))
+            end if
+             if(wisotope) then                      !Are you using isotopic physics?
+               if(qv0 .ne. 0._r8) then              !prevent NaNs?
+                 fv = qv/qv0                        !fraction of vapor remaining.
+               else
+                 fv = 1._r8                         !if at risk for NaN, just assume unity
+               end if
+               ae = wtrc_get_alpha(qv,tavg,iwspec(wtrc_iatype(m,iwtvap)),iwtvap,iwtliq,.false.,1._r8) !get equilibrium fractionation factor
+               if(ae-fv*(ae-1._r8) .ne. 0._r8) then !prevent NaNs
+                 Rve = Rv0/(ae-fv*(ae-1._r8))       !calculate new Rv value (for fraction that will become liquid)
+                 Rle = ae*Rve                       !Assume liquid is in equil. with vapor.
+                 Rve = Rve*(1._r8-nu)               !have ratio represent only liquid condensate
+                 Rle = Rle*(1._r8-nu)
+               else
+                 Rve = Rv0*(1._r8-nu)               !if at risk for NaN, just conserve ratio !UNCOMMENT LATER!
+                 Rle = Rv0*(1._r8-nu)
+               end if
+               if(fv .ne. 1._r8) then               !prevent NaNs
+                 rh = qv/qs                         !calculate relative humidity
+                 ae = wtrc_get_alpha(qv,tavg,iwspec(wtrc_iatype(m,iwtvap)),iwtvap,iwtice,.false.,rh) !get kinetic*equilibrium fract. factor
+                 Rvr = Rv0*(fv**(ae-1._r8))         !calculate new Rv value (assume Rayleigh distillation for fraction that will become ice)
+                 Rlr = (Rv0-fv*Rvr)/(1._r8-fv)      !calculate new Rl value (assume Rayleigh distillation)
+                 Rvr = Rvr*nu                       !have ratio represent only ice condensate
+                 Rlr = Rlr*nu
+               else
+                 Rvr = Rv0*nu                       !if at risk for NaN, just conserve ratio !UNCOMMENT LATER!
+                 Rlr = Rv0*nu
+               end if
+               Rv = Rve+Rvr                         !combine into final Rv and Rl
+               Rl = Rle+Rlr
+             else
+               Rv = Rv0                             !assume ratios stay constant if water isotopes are off.
+               Rl = Rv0
+             end if
+  
+            !Adjust values according to water tracer ratios:
+             wtout(m,1) = Rv*qv               !Water vapor
+             wtout(m,2) = (Rl*qc)*(1._r8-nu)  !Cloud liquid
+             wtout(m,3) = nu*(Rl*qc)          !Cloud ice
+  
+           end do !water species
+         end if   !water tracers
+        !*****************************************   
+
+    end if !(super-)saturation
 
     return
   end subroutine conden
@@ -5046,7 +6092,8 @@ end subroutine uwshcu_readnl
     return
   end subroutine fluxbelowinv
 
-  subroutine positive_moisture_single( xlv, xls, mkx, dt, qvmin, qlmin, qimin, dp, qv, ql, qi, s, qvten, qlten, qiten, sten )
+  subroutine positive_moisture_single( xlv, xls, mkx, dt, qvmin, qlmin, qimin, dp, qv, ql, qi, s, qvten, qlten, qiten, sten, &
+    ncnst, wtr, wtten )
   ! ------------------------------------------------------------------------------- !
   ! If any 'ql < qlmin, qi < qimin, qv < qvmin' are developed in any layer,         !
   ! force them to be larger than minimum value by (1) condensating water vapor      !
@@ -5057,6 +6104,14 @@ end subroutine uwshcu_readnl
   ! Note that (qv,ql,qi,s) are final state variables after applying corresponding   !
   ! input tendencies and corrective tendencies                                      !
   ! ------------------------------------------------------------------------------- !
+      ! --------------------------- !
+   !water tracer use statements
+  ! --------------------------- !
+    use water_tracer_vars, only : trace_water, wisotope, wtrc_iatype, iwspec, wtrc_nwset
+    use water_tracers,     only : wtrc_ratio, wtrc_get_rstd
+    use water_types,       only : iwtvap, iwtliq, iwtice
+  ! --------------------------- ! 
+
     implicit none
     integer,  intent(in)     :: mkx
     real(r8), intent(in)     :: xlv, xls
@@ -5064,8 +6119,19 @@ end subroutine uwshcu_readnl
     real(r8), intent(in)     :: dp(mkx)
     real(r8), intent(inout)  :: qv(mkx), ql(mkx), qi(mkx), s(mkx)
     real(r8), intent(inout)  :: qvten(mkx), qlten(mkx), qiten(mkx), sten(mkx)
-    integer   k
+    integer   k,m
     real(r8)  dql, dqi, dqv, sum, aa, dum 
+
+    !water tracers:
+    integer,  intent(in)               :: ncnst                 !number of constitutents
+    real(r8), intent(inout), optional  :: wtr(mkx,wtrc_nwset,3) !Water tracer state (1=vapor, 2=liquid, 3=ice)
+    real(r8), intent(inout), optional  :: wtten(mkx,ncnst)      !Water tracer tendency
+    real(r8)                           :: wtr0(mkx,wtrc_nwset,3)!Original water tracer values
+    real(r8)  Rv                                                 !Water tracer ratios
+
+    if(present(wtr)) then
+      wtr0(:,:,:) = wtr(:,:,:)  !initalize storage variable - JN
+    end if
 
     do k = mkx, 1, -1        ! From the top to the 1st (lowest) layer from the surface
        dql = max(0._r8,1._r8*qlmin-ql(k))
@@ -5088,6 +6154,58 @@ end subroutine uwshcu_readnl
        qv(k) = max(qv(k),qvmin)
        ql(k) = max(ql(k),qlmin)
        qi(k) = max(qi(k),qimin)
+       !************************************************
+       !Modify water tracers in the same way, multiplied
+       !by their tracer ratio:
+       !
+       !NOTE:  This code modifies moisture by producing
+       !condensation, which means that some sort of
+       !isotopic fractionation should occur.  However,
+       !this whole subroutine seems a little, for lack
+       !of a better word, arbitrary, and thus for now
+       !will simply be modified by the ratios.  Still,
+       !if this scheme does not produce the correct
+       !isotope values, the lack of fractionation here
+       !could be the cause - JN.
+       !************************************************
+       if(trace_water .and. present(wtr)) then
+        wtr0(k,:,:) = wtr(k,:,:)  !save original values
+        do m=1,wtrc_nwset         !Loop over water species
+         !Calculate condensate ratios:
+         !NOTE:  Since condensation comes from vapor, vapor is the source, and thus R must be calculated from vapor. - JN
+          ! Rv = wtrc_ratio(iwspec(wtrc_iatype(m,iwtvap)),wtr0(k,m,1),wtr0(k,1,1))
+          Rv = wtrc_ratio(m,wtr0(k,m,1),wtr0(k,1,1))
+         !Modify tendencies:
+          wtten(k,wtrc_iatype(m,iwtliq)) = wtten(k,wtrc_iatype(m,iwtliq)) + Rv*dql/dt
+          wtten(k,wtrc_iatype(m,iwtice)) = wtten(k,wtrc_iatype(m,iwtice)) + Rv*dqi/dt
+          wtten(k,wtrc_iatype(m,iwtvap)) = wtten(k,wtrc_iatype(m,iwtvap)) - Rv*(dql+dqi)/dt
+         !Modifty states:
+          wtr(k,m,2) = wtr(k,m,2) + Rv*dql
+          wtr(k,m,3) = wtr(k,m,3) + Rv*dqi
+          wtr(k,m,1) = wtr(k,m,1) - Rv*(dql+dqi)
+        end do
+        wtr0(k,:,:) = wtr(k,:,:) !save original values (again)
+        do m=1,wtrc_nwset    !loop over water species
+         !Calculate water vapor ratio:
+          ! Rv = wtrc_ratio(iwspec(wtrc_iatype(m,iwtvap)),wtr0(k,m,1),wtr0(k,1,1))
+          Rv = wtrc_ratio(m,wtr0(k,m,1),wtr0(k,1,1))
+         !Modify vapor tendency:
+          wtten(k,wtrc_iatype(m,iwtvap)) = wtten(k,wtrc_iatype(m,iwtvap)) + Rv*dqv/dt
+         !Modify vapor state:
+          wtr(k,m,1) = wtr(k,m,1) + Rv*dqv
+          if( k .ne. 1 ) then !Make sure you aren't at bottom level, then take from level below:
+            wtr(k-1,m,1) = wtr(k-1,m,1) - Rv*(dqv*dp(k)/dp(k-1))
+            wtten(k-1,wtrc_iatype(m,iwtvap)) = wtten(k-1,wtrc_iatype(m,iwtvap))- Rv*(dqv*dp(k)/dp(k-1)/dt)
+          end if
+          Rv = wtrc_get_rstd(iwspec(wtrc_iatype(m,iwtvap))) !use standard ratio when setting value to qmin. - JN
+          wtr(k,m,1) = max(wtr(k,m,1),Rv*qvmin) !Make sure it matches minimum (use standard ratio?)
+          wtr(k,m,2) = max(wtr(k,m,2),Rv*qlmin)
+          wtr(k,m,3) = max(wtr(k,m,3),Rv*qimin)
+        end do
+      end if !water tracers
+      !************************************************
+
+
     end do
     ! Extra moisture used to satisfy 'qv(i,1)=qvmin' is proportionally 
     ! extracted from all the layers that has 'qv > 2*qvmin'. This fully
@@ -5104,6 +6222,22 @@ end subroutine uwshcu_readnl
                    dum      = aa*qv(k)
                    qv(k)    = qv(k) - dum
                    qvten(k) = qvten(k) - dum/dt
+                   !**************
+                   !Water tracers:
+                   !**************
+                   if(trace_water) then
+                    wtr0(k,:,:) = wtr(k,:,:) !save original values
+                    do m=1, wtrc_nwset       !Loop over water species
+                     !Calculate water vapor ratio:
+                      ! Rv = wtrc_ratio(iwspec(wtrc_iatype(m,iwtvap)),wtr0(k,m,1),wtr0(k,1,1))
+                      Rv = wtrc_ratio(m,wtr0(k,m,1),wtr0(k,1,1))
+                     !Modify tracer state:
+                      wtr(k,m,1) = wtr(k,m,1) - Rv*dum
+                     !Modify tracer tendency:
+                      wtten(k,wtrc_iatype(m,iwtvap)) = wtten(k,wtrc_iatype(m,iwtvap)) - Rv*dum/dt
+                    end do
+                  end if
+                  !**************
                endif
             enddo 
         else 

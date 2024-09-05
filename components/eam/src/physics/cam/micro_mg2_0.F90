@@ -410,8 +410,12 @@ subroutine micro_mg_tend ( &
      nfice,                        qcrat,                        &
      errstring, & ! Below arguments are "optional" (pass null pointers to omit).
      tnd_qsnow,          tnd_nsnow,          re_ice,             &
-     prer_evap,                                                      &
-     frzimm,             frzcnt,             frzdep)
+     prer_evap,                                                  &
+     !++ag Water Tracers (move before null tracers?)
+     !     frzimm,             frzcnt,             frzdep)
+          frzimm,             frzcnt,             frzdep,             &
+          frzro, meltso, frzrpst, meltspst, wtprelat, wtsedlat,       &
+          wtpostlat, wtfri_pre, wtfri_post, wtfc, wtfi, wtfr, wtfs )
 
   ! Constituent properties.
   use micro_mg_utils, only: &
@@ -584,6 +588,22 @@ subroutine micro_mg_tend ( &
 
   real(r8), intent(out) :: prer_evap(:,:)
 
+  !++ag Water tracer/isotopes
+    real(r8), intent(out) :: frzro(mgncol,nlev)      ! mass tendency from freezing of rain (kg/kg/s)
+    real(r8), intent(out) :: meltso(mgncol,nlev)     ! mass tendency from melting of snow (kg/kg/s)
+    real(r8), intent(out) :: frzrpst(mgncol,nlev)    ! mass tendency from rain freezing post-sedimentation
+    real(r8), intent(out) :: meltspst(mgncol,nlev)   ! mass tendency from snow melting post-sedimentation 
+    real(r8), intent(out) :: wtprelat(mgncol,nlev)   ! latent heating rate due to pre-sed processes
+    real(r8), intent(out) :: wtsedlat(mgncol,nlev)   ! latent heating rate during sedimentation
+    real(r8), intent(out) :: wtpostlat(mgncol,nlev)  ! latent heating  due to post-sed processes
+    real(r8), intent(out) :: wtfri_pre(mgncol,nlev)  ! Is freezing rain being added to cloud ice?
+    real(r8), intent(out) :: wtfri_post(mgncol,nlev) ! Is freezing rain post-sedimentation being added to cloud ice?
+    real(r8), intent(out) :: wtfc(mgncol,nlev)       ! cloud liquid sedimentation fall rate
+    real(r8), intent(out) :: wtfi(mgncol,nlev)       ! cloud ice sedimentation fall rate
+    real(r8), intent(out) :: wtfr(mgncol,nlev)       ! stratiform rain sedimentation fall rate
+    real(r8), intent(out) :: wtfs(mgncol,nlev)       ! stratiform snow sedimentation fall rate
+  !--ag
+
   character(128),   intent(out) :: errstring  ! output status (non-blank for error return)
 
   ! Tendencies calculated by external schemes that can replace MG's native
@@ -726,7 +746,6 @@ subroutine micro_mg_tend ( &
   ! bergeron process
   real(r8) :: berg(mgncol,nlev)   ! mass mixing ratio (cloud ice)
   real(r8) :: bergs(mgncol,nlev)  ! mass mixing ratio (snow)
-
 
   ! fallspeeds
   ! number-weighted
@@ -1074,6 +1093,22 @@ subroutine micro_mg_tend ( &
 
   nfice = 0._r8
 
+  !++ag initialize water tracers/isotopes:
+    frzro = 0._r8
+    meltso = 0._r8
+    frzrpst = 0._r8
+    meltspst = 0._r8
+    wtprelat = 0._r8
+    wtsedlat = 0._r8
+    wtpostlat = 0._r8
+    wtfri_pre = -1._r8
+    wtfri_post = -1._r8
+    wtfc = 0._r8
+    wtfi = 0._r8
+    wtfr = 0._r8
+    wtfs = 0._r8
+  !--ag
+
   !ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
   ! droplet activation
   ! get provisional droplet number after activation. This is used for
@@ -1158,6 +1193,12 @@ subroutine micro_mg_tend ( &
                  dum = 1._r8
               end if
 
+!++AG Water Tracers: save total melted amount at this vertical level:
+              ! meltso(i,k) = meltso(i,k) + dum*qs(i,k)*g  
+              !modify to be in units of kg/kg/s -JN:
+               meltso(i,k) = meltso(i,k) + dum*qs(i,k)/deltat
+!--ag
+
               minstsm(i,k) = dum*qs(i,k)
               ninstsm(i,k) = dum*ns(i,k)
 
@@ -1188,6 +1229,12 @@ subroutine micro_mg_tend ( &
               else
                  dum = 1._r8
               end if
+
+!++AG Water Tracers: save total frozen amount at this vertical level:
+            ! frzro(i,k) = frzro(i,k) + dum*qr(i,k)*g  
+            !modify to be in units of kg/kg/s -JN:
+                frzro(i,k) = frzro(i,k) + dum*qr(i,k)/deltat
+!--ag
 
               minstrf(i,k) = dum*qr(i,k)
               ninstrf(i,k) = dum*nr(i,k)
@@ -1672,6 +1719,8 @@ subroutine micro_mg_tend ( &
               nnuccri(i,k)=nnuccr(i,k)
               mnuccr(i,k)=0._r8
               nnuccr(i,k)=0._r8
+             !Water tracers -JN:
+              wtfri_pre(i,k) = 1._r8
               end if
            end if
         end if
@@ -1917,11 +1966,10 @@ subroutine micro_mg_tend ( &
              (prai(i,k)+prci(i,k))*icldm(i,k)+(psacws(i,k)+bergs(i,k))*lcldm(i,k)+(prds(i,k)+ &
              pracs(i,k)+mnuccr(i,k))*precip_frac(i,k)
 
-
-        cmeout(i,k) = vap_dep(i,k) + ice_sublim(i,k) + mnuccd(i,k)
+        cmeout(i,k) = vap_dep(i,k) + ice_sublim(i,k) + mnuccd(i,k) + mnudep(i,k)*lcldm(i,k)
 
         ! add output for cmei (accumulate)
-        cmeitot(i,k) = vap_dep(i,k) + ice_sublim(i,k) + mnuccd(i,k)
+        cmeitot(i,k) = vap_dep(i,k) + ice_sublim(i,k) + mnuccd(i,k) + mnudep(i,k)*lcldm(i,k)
 
         ! assign variables for trop_mozart, these are grid-average
         !-------------------------------------------------------------------
@@ -1965,6 +2013,9 @@ subroutine micro_mg_tend ( &
 
         pracstot(i,k) = pracs(i,k)*precip_frac(i,k)
         mnuccrtot(i,k) = mnuccr(i,k)*precip_frac(i,k)
+        !need to output both rain freezing terms, as they
+        !are mutually exlcusive-JN:
+         mnuccrtot(i,k) = (mnuccr(i,k)+mnuccri(i,k))*precip_frac(i,k)
 
 
         nctend(i,k) = nctend(i,k)+&
@@ -2073,6 +2124,9 @@ subroutine micro_mg_tend ( &
   nevapr = nevapr + evapsnow
   prain = prain + prodsnow
 
+  !++AG Water tracers/isotopes: pre-sed latent heat
+    wtprelat = tlat
+
   sed_col_loop: do i=1,mgncol
   
    if (.not. precip_off) then
@@ -2138,6 +2192,9 @@ subroutine micro_mg_tend ( &
            fnc(k)= 0._r8
         end if
 
+        !Water tracers:
+        wtfc(i,k) = fc(k)
+
         ! calculate number and mass weighted fall velocity for cloud ice
 
         if (dumi(i,k).ge.qsmall) then
@@ -2152,6 +2209,9 @@ subroutine micro_mg_tend ( &
            fi(k) = 0._r8
            fni(k)= 0._r8
         end if
+
+        !Water tracers:
+        wtfi(i,k) = fi(k)
 
         ! fallspeed for rain
 
@@ -2173,6 +2233,9 @@ subroutine micro_mg_tend ( &
            fnr(k)=0._r8
         end if
 
+        !Water tracers:
+        wtfr(i,k) = fr(k)
+
         ! fallspeed for snow
 
         call size_dist_param_basic(mg_snow_props, dums(i,k), dumns(i,k), &
@@ -2191,6 +2254,9 @@ subroutine micro_mg_tend ( &
            fs(k)=0._r8
            fns(k)=0._r8
         end if
+
+        !Water tracers:
+        wtfs(i,k) = fs(k)
 
         ! redefine dummy variables - sedimentation is calculated over grid-scale
         ! quantities to ensure conservation
@@ -2286,6 +2352,9 @@ subroutine micro_mg_tend ( &
 
            tlat(i,k)=tlat(i,k)+(faltndqie-faltndi)*xxls/nstep
 
+           !needed for water tracers/isotopes:
+           wtsedlat(i,k) = wtsedlat(i,k)+(faltndqie-faltndi)*xxls/nstep
+
            dumi(i,k) = dumi(i,k)-faltndi*deltat/nstep
            dumni(i,k) = dumni(i,k)-faltndni*deltat/nstep
 
@@ -2356,6 +2425,9 @@ subroutine micro_mg_tend ( &
            qcsevap(i,k)=qcsevap(i,k)-(faltndqce-faltndc)/nstep
 
            tlat(i,k)=tlat(i,k)+(faltndqce-faltndc)*xxlv/nstep
+
+           !needed for water tracers/isotopes:
+           wtsedlat(i,k) = wtsedlat(i,k)+(faltndqce-faltndc)*xxlv/nstep
 
            dumc(i,k) = dumc(i,k)-faltndc*deltat/nstep
            dumnc(i,k) = dumnc(i,k)-faltndnc*deltat/nstep
@@ -2485,7 +2557,6 @@ subroutine micro_mg_tend ( &
      end do   !! nstep loop
      
      end if
-
      ! end sedimentation
      !ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 
@@ -2551,6 +2622,10 @@ subroutine micro_mg_tend ( &
               dum1=-xlf*dum*dums(i,k)/deltat
               tlat(i,k)=tlat(i,k)+dum1
               meltsdttot(i,k)=meltsdttot(i,k) + dum1
+!++AG water tracers:
+              meltspst(i,k) = meltspst(i,k) + dum*dums(i,k)/deltat !JN
+              wtpostlat(i,k) = wtpostlat(i,k) + dum1
+!--AG
            end if
         end if
 
@@ -2586,16 +2661,20 @@ subroutine micro_mg_tend ( &
               else
                  qitend(i,k)=qitend(i,k)+dum*dumr(i,k)/deltat
                  nitend(i,k)=nitend(i,k)+dum*dumnr(i,k)/deltat
+                 !Water tracers:
+                  wtfri_post(i,k) = 1._r8
               end if
 
               ! heating tendency
               dum1 = xlf*dum*dumr(i,k)/deltat
               frzrdttot(i,k)=frzrdttot(i,k) + dum1
               tlat(i,k)=tlat(i,k)+dum1
-
+!++AG water tracers:
+            frzrpst(i,k) = frzrpst(i,k)+dum*dumr(i,k)/deltat !JN
+            wtpostlat(i,k) = wtpostlat(i,k) + dum1
+!--AG
            end if
         end if
-
 
         if (do_cldice) then
            if (t(i,k)+tlat(i,k)/cpp*deltat > tmelt) then
@@ -2627,6 +2706,9 @@ subroutine micro_mg_tend ( &
                  qitend(i,k)=((1._r8-dum)*dumi(i,k)-qi(i,k))/deltat
                  nitend(i,k)=((1._r8-dum)*dumni(i,k)-ni(i,k))/deltat
                  tlat(i,k)=tlat(i,k)-xlf*dum*dumi(i,k)/deltat
+!++AG water tracers:
+                 wtpostlat(i,k) = wtpostlat(i,k) - xlf*dum*dumi(i,k)/deltat
+!--AG
               end if
            end if
 
@@ -2658,9 +2740,12 @@ subroutine micro_mg_tend ( &
                  qctend(i,k)=((1._r8-dum)*dumc(i,k)-qc(i,k))/deltat
                  nctend(i,k)=((1._r8-dum)*dumnc(i,k)-nc(i,k))/deltat
                  tlat(i,k)=tlat(i,k)+xlf*dum*dumc(i,k)/deltat
+!++AG water tracers:
+                 wtpostlat(i,k) = wtpostlat(i,k) + xlf*dum*dumc(i,k)/deltat
+!--AG
+
               end if
            end if
-
            ! remove any excess over-saturation, which is possible due to non-linearity when adding
            ! together all microphysical processes
            !-----------------------------------------------------------------
@@ -2699,6 +2784,9 @@ subroutine micro_mg_tend ( &
               ! for output
               qvres(i,k)=-dum
               tlat(i,k)=tlat(i,k)+dum*(1._r8-dum1)*xxlv+dum*dum1*xxls
+!++AG water tracers:
+              wtpostlat(i,k) = wtpostlat(i,k) + dum*(1._r8-dum1)*xxlv+dum*dum1*xxls
+!--AG
            end if
         end if
 
@@ -2741,7 +2829,6 @@ subroutine micro_mg_tend ( &
         ! limit in-precip mixing ratios
         dumr(i,k)=min(dumr(i,k),10.e-3_r8)
         dums(i,k)=min(dums(i,k),10.e-3_r8)
-
         ! cloud ice effective radius
         !-----------------------------------------------------------------
 

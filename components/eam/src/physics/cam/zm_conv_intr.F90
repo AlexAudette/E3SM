@@ -1,6 +1,4 @@
 
-
-
 module zm_conv_intr
 !---------------------------------------------------------------------------------
 ! Purpose:
@@ -14,10 +12,13 @@ module zm_conv_intr
    use shr_kind_mod, only: r8=>shr_kind_r8
    use physconst,    only: cpair
    use ppgrid,       only: pver, pcols, pverp, begchunk, endchunk
-   use zm_conv,      only: zm_conv_evap, zm_convr, convtran, momtran, trigdcape_ull, trig_dcape_only
+   use zm_conv,      only: zm_conv_evap, zm_conv_evap_tags, zm_convr, convtran, momtran, trigdcape_ull, trig_dcape_only
    use cam_history,  only: outfld, addfld, horiz_only, add_default
    use perf_mod
    use cam_logfile,  only: iulog
+   use constituents, only: cnst_add
+   use cam_abortutils, only: endrun
+
    
    implicit none
    private
@@ -38,7 +39,8 @@ module zm_conv_intr
       dp_cldliq_idx, &
       dp_cldice_idx, &
       prec_dp_idx,   &
-      snow_dp_idx
+      snow_dp_idx,   &
+      wtdlf_idx
 
 ! DCAPE-ULL
    integer :: t_star_idx       !t_star index in physics buffer
@@ -53,6 +55,9 @@ module zm_conv_intr
    logical  ::    convproc_do_aer 
    logical  ::    convproc_do_gas 
    logical  ::    clim_modal_aero
+
+   !Needed for Water tracers:
+   integer  limcnv           !top interface level limit for convection
 
 !=========================================================================================
 contains
@@ -118,7 +123,7 @@ subroutine zm_conv_init(pref_edge)
 
 
   logical :: no_deep_pbl    ! if true, no deep convection in PBL
-  integer  limcnv           ! top interface level limit for convection
+!   integer  limcnv           ! top interface level limit for convection
   integer k, istat
   logical :: history_budget ! output tendencies and state variables for CAM4
                             ! temperature, water vapor, cloud ice and cloud
@@ -228,6 +233,8 @@ subroutine zm_conv_init(pref_edge)
     nevapr_dpcu_idx = pbuf_get_index('NEVAPR_DPCU')
     prec_dp_idx     = pbuf_get_index('PREC_DP')
     snow_dp_idx     = pbuf_get_index('SNOW_DP')
+    wtdlf_idx       = pbuf_get_index('WTDLF')
+
 
 end subroutine zm_conv_init
 !=========================================================================================
@@ -251,9 +258,16 @@ subroutine zm_conv_tend(pblh    ,mcon    ,cme     , &
    use phys_grid,     only: get_lat_p, get_lon_p
    use time_manager,  only: get_nstep, is_first_step
    use physics_buffer, only : pbuf_get_field, physics_buffer_desc, pbuf_old_tim_idx
-   use constituents,  only: pcnst, cnst_get_ind, cnst_is_convtran1
+   use constituents,  only: pcnst, cnst_get_ind, cnst_is_convtran1,cnst_name
    use physconst,     only: gravit
    use phys_control,  only: cam_physpkg_is
+! WT-block begins 
+   use water_types,   only: iwtvap, iwtundef, iwtliq, iwtice, iwtcvrain, iwtcvsnow, pwtype, iwtstrain, iwtstsnow
+   use water_tracer_vars, only: trace_water, wtrc_iatype, wtrc_nwset, wtrc_iawset, &
+                                wtrc_srfpcp_indices, wtrc_bulk_indices, wtrc_iatype, &
+                                iwspec
+   use water_tracers, only: wtrc_check_h2o, wtrc_check_h2o_comp,wtrc_check_tend_comp, wtrc_precip_evap, wtrc_q1q2_pjr, wtrc_q1q2_pjr_cam5, wtrc_ratio, wtrc_mass_fixer, wtrc_check_lq
+! WT-block ends
 
    ! Arguments
 
@@ -313,6 +327,58 @@ subroutine zm_conv_tend(pblh    ,mcon    ,cme     , &
    real(r8) :: tend_s_snwevmlt(pcols,pver) ! Heating rate of evap/melting of snow
    real(r8) :: fake_dpdry(pcols,pver) ! used in convtran call
 
+   ! WT-block begins 
+      !----------------------
+      !Local water tracer variables (should probably be cleaned up)
+      !---------------------- 
+      real(r8) wtprect(pcols,pcnst)          ! Temporary tracer total precipitation from ZM convection
+      real(r8) wtsnowt(pcols,pcnst)          ! Temproary tracer snow from ZM convection
+      real(r8) wtprec_out(pcols,wtrc_nwset)          ! Temporary tracer total precipitation from ZM convection
+      real(r8) wtsnow_out(pcols,wtrc_nwset)          ! Temproary tracer snow from ZM convection
+      real(r8) qu(pcols,pver)                ! updraft water vapour ZM scheme 
+      real(r8) qd(pcols,pver)                ! downdraft water vapour ZM scheme 
+      real(r8) dz(pcols,pver)                ! layer thickness
+      real(r8) eps0(pcols)                   ! Not sure...
+      real(r8) cu(pcols,pver)                ! condensation rate
+      real(r8) evp(pcols,pver)               ! evaporation rate
+      real(r8) tu(pcols,pver)                ! temperature of updraft
+      real(r8) td(pcols,pver)                ! temperature of downdraft   
+      real(r8) wtrprd(pcols,pver,pcnst)      ! rain production in ZM convection
+      real(r8) rppe(pcols,pver)              ! ZM rain production pre-evaporation
+      real(r8) evpstore(pcols,pver)          ! bulk precipiation evaporation rate
+      real(r8) substore(pcols,pver)          ! bulk snow sublimation rate
+   
+      real(r8) qst(pcols,pver)               ! bulk environmental saturation mixing ratio
+      real(r8) qsthat(pcols,pver)            ! qst at interfaces
+      real(r8) hmn(pcols,pver)               ! bulk environmental moist static energy
+      real(r8) hsat(pcols,pver)              ! bulk env. saturation moist static energy
+      real(r8) hsthat(pcols,pver)            ! hsat at interfaces
+      real(r8) wteu(pcols,pver)              ! eu in units of 1/m
+      real(r8) wted(pcols,pver)              ! ed in units of 1/m
+      real(r8) wtdu(pcols,pver)              ! du in units of 1/m
+      real(r8) wtmu(pcols,pver)              ! mu pre-unit conversion
+      real(r8) wtmd(pcols,pver)              ! md pre-unit conversion
+      real(r8) wtcu(pcols,pver)              ! cu pre-unit conversion
+      real(r8) wtevp(pcols,pver)             ! evp pre-unit conversion
+      real(r8) qhatb(pcols,pver)             ! evp pre-unit conversion
+      real(r8) rpdpc(pcols,pver)             ! rprd pre-unit conversion
+      real(r8) qds(pcols,pver)               ! bulk water saturation mixing ratio in downdraft
+   
+      real(r8) Rwt(pcols,pver,wtrc_nwset,pwtype)  !Convtran water tracer ratio
+   
+      logical done(pcols,pver)               ! end of convr updraft loop
+      real(r8) c0mask(pcols)                 ! autoconversion rates
+      integer jd(pcols)                      ! downdraft initation level
+      integer lel(pcols)                     ! Equilibrium level (EL)
+      integer lcl(pcols)                     ! Lifted condensation level (LCL)
+      integer wtpcidx                        ! Physics Buffer index
+      integer wtsnidx                        ! Physics Buffer index
+   !   integer ijctop(pcols)                  ! top deep-con indices
+   !   integer ijcbot(pcols)                  ! cloud base indices
+      integer :: itype
+      logical :: isOk                        ! Used to check water tracer mass conservation
+   
+      !---------------------------------------------
    ! physics types
    type(physics_state) :: state1        ! locally modify for evaporation to use, not returned
    type(physics_ptend) :: ptend_loc     ! package tendencies
@@ -337,6 +403,13 @@ subroutine zm_conv_tend(pblh    ,mcon    ,cme     , &
    real(r8) :: maxgsav(pcols)                  ! tmp array for recording and outfld to MAXI
 
 
+   real(r8), dimension(pcols, pver, wtrc_nwset):: Rvap
+   !Water tracers
+   real(r8), pointer, dimension(:)       :: wtprec  !tracer total precipitation
+   real(r8), pointer, dimension(:)       :: wtsnow
+   real(r8), pointer, dimension(:,:,:)  :: wtdlf     ! Detraining water tracer cld from convection
+   real(r8) :: wtdlf_base(pcols,pver)    ! Debugging
+
    real(r8) :: jctop(pcols)  ! o row of top-of-deep-convection indices passed out.
    real(r8) :: jcbot(pcols)  ! o row of base of cloud indices passed out.
 
@@ -357,11 +430,12 @@ subroutine zm_conv_tend(pblh    ,mcon    ,cme     , &
    real(r8) :: seten(pcols, pver)
    logical  :: l_windt(2)
    real(r8) :: tfinal1, tfinal2
-   integer  :: ii
+   integer  :: ii, wtype
 
    logical  :: lq(pcnst)
 
    !----------------------------------------------------------------------
+! WT-block ends
 
    ! initialize
    lchnk = state%lchnk
@@ -374,9 +448,22 @@ subroutine zm_conv_tend(pblh    ,mcon    ,cme     , &
    wind_tends(:ncol,:pver,:) = 0.0_r8
 
    call physics_state_copy(state,state1)             ! copy state to local state1.
+! WT-block begins 
+
+  !  if(trace_water) then
+  !     isOk = wtrc_check_h2o("before-deep", state1, state1%q, ztodt)
+  !   end if
+! WT-block ends
 
    lq(:) = .FALSE.
    lq(1) = .TRUE.
+! WT-block begins 
+   !water tracers:
+   do ii=1,wtrc_nwset
+      lq(wtrc_iatype(ii,iwtvap)) = .TRUE.
+    end do
+! WT-block ends
+
    call physics_ptend_init(ptend_loc, state%psetcols, 'zm_convr', ls=.true., lq=lq)! initialize local ptend type
 
 !
@@ -402,6 +489,8 @@ subroutine zm_conv_tend(pblh    ,mcon    ,cme     , &
      end if
    end if
 
+   if (wtdlf_idx > 0) call pbuf_get_field(pbuf, wtdlf_idx,   wtdlf)
+
 !
 ! Begin with Zhang-McFarlane (1996) convection parameterization
 !
@@ -415,8 +504,15 @@ subroutine zm_conv_tend(pblh    ,mcon    ,cme     , &
                     mu,md,du,eu,ed      , &
                     dp ,dsubcld ,jt,maxg,ideep   , &
                     lengath ,ql      ,rliq  ,landfrac,  &
-                    t_star, q_star, dcape)  
+                    t_star, q_star, dcape,&
+! WT-block begins 
+                    qu  ,qd  ,dz ,rppe   ,eps0 ,cu , &
+                    evp ,tu  ,td  ,jd  ,done  ,lel      ,lcl ,qst ,qsthat     ,&
+                    hmn ,hsat    ,hsthat      ,wteu     ,wted,wtdu,wtmu       ,wtmd ,wtcu , &
+                    c0mask, rpdpc, qds ,wtevp, qhatb )  
+               
    call t_stopf ('zm_convr')
+
 
    call outfld('CAPE', cape, pcols, lchnk)        ! RBN - CAPE output
 !
@@ -472,15 +568,104 @@ subroutine zm_conv_tend(pblh    ,mcon    ,cme     , &
 
   call physics_ptend_init(ptend_all, state%psetcols, 'zm_conv_tend')
 
+  ! if(trace_water) then
+  !   isOk = wtrc_check_h2o_comp("before-q1q2", state1, state1%q, ztodt)
+  ! end if
+
+! WT-block begins 
+  !------------------------------------------
+  !Water tracers
+  !------------------------------------------
+  
+    if (trace_water) then
+     call t_startf ('wtrc_zm_convr')
+  
+     !
+     ! initialize tracer variables
+     wtdlf(:ncol,:,:)  = 0._r8
+     wtrprd(:ncol,:,:) = 0._r8
+     wtprect(:ncol,:)  = 0._r8
+  
+     !
+     ! assign totals 
+     wtrprd(:ncol,:,1) = rprd(:ncol,:)
+     wtprect(:ncol,1)  = prec(:ncol)
+  
+     !New (simplified) version three:
+     call wtrc_q1q2_pjr_cam5( ptend_loc%q       ,ideep, lengath  , &
+                       state%q          ,qu      ,done  ,lel ,lcl , &
+                       wtdu    ,du      ,dp      ,qst   ,qsthat   , &
+                       hmn     ,hsat    ,hsthat  ,wteu            , &
+                       mu      ,md      ,qd      ,tu    ,td       , &
+                       dsubcld ,maxg    ,jt      ,ncol            , &
+                       limcnv-1         ,wted    ,rppe  ,wtmu  ,wtmd , &
+                       wtevp   ,evp     ,wtcu    ,cu    ,state%pmid  , &
+                       dz      ,qds     ,rpdpc   ,c0mask,eps0        , &
+                       jd      ,wtrprd  ,wtdlf   ,ztodt, qhatb )
+
+  ! isOk = wtrc_check_tend_comp("after-wtrc_q1q2_pjr_cam5", state1, ptend_loc%q, 1._r8)
+
+    wtdlf_base(:ncol,:) = wtdlf(:ncol,:,1)
+     call t_stopf ('wtrc_zm_convr')
+  
+     !!! CAC -- Not sure this is the best way to do this?
+     ! This name triggers a special case in physics_types.F90:physics_update()
+     ptend_all%name = 'convect_deep'
+
+
+  
+   end if
+  !--------------------------------------------------
+! WT-block ends
+
+
+
+  !  if(trace_water) then
+  !   isOk = wtrc_check_h2o_comp("after-q1q2", state1, state1%q, ztodt)
+  ! end if
+  ! if(trace_water) then
+  !   isOk = wtrc_check_tend_comp("after-q1q2", state1, ptend_loc%q, ztodt)
+  ! end if
+
+
   ! add tendency from this process to tendencies from other processes
   call physics_ptend_sum(ptend_loc,ptend_all, ncol)
 
+  call wtrc_check_lq(ptend_loc%lq)
+
   ! update physics state type state1 with ptend_loc 
   call physics_update(state1, ptend_loc, ztodt)
+  ! if(trace_water) then
+  !   isOk = wtrc_check_h2o_comp("after-q1q2 update before fixer", state1, state1%q, ztodt)
+  ! end if
 
+  ! call wtrc_mass_fixer(state1)
+
+  ! if(trace_water) then
+  !   isOk = wtrc_check_h2o_comp("after-q1q2 update ", state1, state1%q, ztodt)
+  ! end if
+
+
+
+! WT-block begins 
+  !-----------------------
+  !Check water tracer mass
+  !-----------------------
+  if (trace_water) then
+     isOk = wtrc_check_h2o("after-deep zm", state1, state1%q, ztodt)
+   end if
+   !-----------------------
+! WT-block ends
+  
   ! initialize ptend for next process
   lq(:) = .FALSE.
   lq(1) = .TRUE.
+! WT-block begins 
+  !Water tracers:  
+do ii=1,wtrc_nwset
+ lq(wtrc_iatype(ii,iwtvap)) = .TRUE.
+end do
+! WT-block ends
   call physics_ptend_init(ptend_loc, state1%psetcols, 'zm_conv_evap', ls=.true., lq=lq)
 
 !
@@ -498,14 +683,64 @@ subroutine zm_conv_tend(pblh    ,mcon    ,cme     , &
     dp_cldice(:ncol,:) = 0._r8
 
     call t_startf ('zm_conv_evap')
-    call zm_conv_evap(state1%ncol,state1%lchnk, &
+    ! state1%q is intent in.
+    ! call zm_conv_evap(state1%ncol,state1%lchnk, &
+    !      state1%t,state1%pmid,state1%pdel,state1%q(:pcols,:pver,1), &
+    !      ptend_loc%s, tend_s_snwprd, tend_s_snwevmlt, ptend_loc%q(:pcols,:pver,1), &
+    !      rprd, cld, ztodt, &
+    !      prec, snow, evpstore, substore, ntprprd, ntsnprd , flxprec, flxsnow)
+
+    call zm_conv_evap_tags(state1%ncol,state1%lchnk, &
          state1%t,state1%pmid,state1%pdel,state1%q(:pcols,:pver,1), &
-         ptend_loc%s, tend_s_snwprd, tend_s_snwevmlt, ptend_loc%q(:pcols,:pver,1), &
-         rprd, cld, ztodt, &
-         prec, snow, ntprprd, ntsnprd , flxprec, flxsnow)
+         ptend_loc%s, tend_s_snwprd, tend_s_snwevmlt, ptend_loc%q(:pcols,:pver,:), &
+         rprd, wtrprd, cld, ztodt, &
+         prec, snow, wtprect, wtsnowt, ntprprd, ntsnprd , flxprec, flxsnow)
     call t_stopf ('zm_conv_evap')
 
+    ! isOk = wtrc_check_tend_comp("after-zm_conv_evap_tags", state1, ptend_loc%q, ztodt)
+
     evapcdp(:ncol,:pver) = ptend_loc%q(:ncol,:pver,1)
+! WT-block begins 
+    !----------------------------------------------------------
+! Water tracers: evaporate falling precip, and assign state
+!----------------------------------------------------------
+
+
+   if (trace_water) then
+      !Check incoming water balance
+ 
+      !Calculate water tracer rain evaporation
+    ! call wtrc_precip_evap(state1, wtrprd, ztodt, evpstore, substore, ptend_loc%q, wtprect, wtsnowt)
+ 
+      !assign values to physics buffer variables
+      do m=1,wtrc_nwset
+        call pbuf_get_field(pbuf, wtrc_srfpcp_indices(iwtcvrain,m), wtprec)
+        call pbuf_get_field(pbuf, wtrc_srfpcp_indices(iwtcvsnow,m), wtsnow)
+ 
+        ! wtprec(:) = wtprect(:,wtrc_iatype(m,iwtvap)) - wtsnowt(:,wtrc_iatype(m,iwtvap)) !assign values (should be rain only)
+        ! wtsnow(:) = wtsnowt(:,wtrc_iatype(m,iwtvap))   !(snow only)
+        wtprec(:) = wtprect(:,m) - wtsnowt(:,m) !assign values (should be rain only)
+        wtsnow(:) = wtsnowt(:,m)   !(snow only)
+
+      enddo
+
+    end if
+
+
+
+ !----------------------------------------------------------
+! WT-block ends
+
+    
+    ! if (trace_water) then
+    !     isOk = wtrc_check_h2o("after-evap", state1, state1%q, ztodt)
+    ! end if
+    ! if (trace_water) then
+    !     isOk = wtrc_check_h2o("after-evap", state1, state1%q, ztodt)
+    !     isOk = wtrc_check_h2o_comp("after-evap", state1, state1%q, ztodt)
+    !     isOk = wtrc_check_tend_comp("after-evap", state1, ptend_loc%q, ztodt) ! Error flags here. Tendency of 
+    ! end if
+ 
 !
 ! Write out variables from zm_conv_evap
 !
@@ -533,7 +768,16 @@ subroutine zm_conv_tend(pblh    ,mcon    ,cme     , &
 
   ! update physics state type state1 with ptend_loc 
   call physics_update(state1, ptend_loc, ztodt)
-
+! WT-block begins 
+  !-----------------------
+  !Check water tracer mass 
+  !-----------------------
+  ! if (trace_water) then
+  !   isOk = wtrc_check_h2o_comp("after-evap", state1, state1%q, ztodt)
+  !   isOk = wtrc_check_tend_comp("after-evap", state1, state1%q, ztodt)
+  ! end if
+ !-----------------------
+! WT-block ends
 
   ! Momentum Transport (non-cam3 physics)
 
@@ -589,12 +833,30 @@ subroutine zm_conv_tend(pblh    ,mcon    ,cme     , &
 
    lq(:)  = .FALSE.
    lq(2:) = cnst_is_convtran1(2:)
+
+! WT-block begins 
+!transport water tracer condensate (NOTE:  May be better to use is_convtran1 logical
+   !instead -JN):
+   if(trace_water) then
+      do ii=1,wtrc_nwset
+        lq(wtrc_iatype(ii,iwtliq)) = .TRUE.
+        lq(wtrc_iatype(ii,iwtice)) = .TRUE.
+        lq(wtrc_iatype(ii,iwtstrain)) = .TRUE.
+        lq(wtrc_iatype(ii,iwtstsnow)) = .TRUE.
+      end do
+    end if
+! WT-block ends
    call physics_ptend_init(ptend_loc, state1%psetcols, 'convtran1', lq=lq)
 
 
    ! dpdry is not used in this call to convtran since the cloud liquid and ice mixing
    ! ratios are moist
    fake_dpdry(:,:) = 0._r8
+  !  if (trace_water) then
+  !    !     isOk = wtrc_check_h2o("after-convtran", state1, state1%q, ztodt)
+  !    !     isOk = wtrc_check_h2o_comp("after-convtran", state1, state1%q, ztodt)
+  !        isOk = wtrc_check_tend_comp("before-convtran", state1, ptend_loc%q, ztodt)
+  !    end if
 
    call t_startf ('convtran1')
    call convtran (lchnk,                                        &
@@ -602,6 +864,95 @@ subroutine zm_conv_tend(pblh    ,mcon    ,cme     , &
                   du, eu, ed, dp, dsubcld,  &
                   jt,maxg, ideep, 1, lengath,  &
                   nstep,   fracis,  ptend_loc%q, fake_dpdry)
+
+  
+! WT-block begins 
+  !  if ( trace_water )then
+  !     !Calculate the water tracer ratio:
+  !     Rwt(:,:,:,:) = 1._r8 !initalize ratio
+  !     if(ptend_loc%lq(wtrc_iatype(1,iwtliq))) then !are water tracers being transported?
+  !        do m=2,wtrc_nwset !loop over water tracers
+  !           do k=1,pver
+  !              do i=1, lengath
+  !               ! do itype = 1, pwtype
+  !                 Rwt(ideep(i),k,m,1) = wtrc_ratio(iwspec(wtrc_iatype(m,iwtliq)), &
+  !                                      ptend_loc%q(ideep(i),k,wtrc_iatype(m,iwtliq)),   &
+  !                                      ptend_loc%q(ideep(i),k,wtrc_iatype(1,iwtliq)))
+  !                 Rwt(ideep(i),k,m,2) = wtrc_ratio(iwspec(wtrc_iatype(m,iwtice)), &
+  !                                      ptend_loc%q(ideep(i),k,wtrc_iatype(m,iwtice)),   &
+  !                                      ptend_loc%q(ideep(i),k,wtrc_iatype(1,iwtice)))
+
+  !                 Rwt(ideep(i),k,m,3) = wtrc_ratio(iwspec(wtrc_iatype(m,iwtstrain)), &
+  !                                      ptend_loc%q(ideep(i),k,wtrc_iatype(m,iwtstrain)),   &
+  !                                      ptend_loc%q(ideep(i),k,wtrc_iatype(1,iwtstrain)))
+  !                 Rwt(ideep(i),k,m,4) = wtrc_ratio(iwspec(wtrc_iatype(m,iwtstsnow)), &
+  !                                      ptend_loc%q(ideep(i),k,wtrc_iatype(m,iwtstsnow)),   &
+  !                                      ptend_loc%q(ideep(i),k,wtrc_iatype(1,iwtstsnow)))
+  !               ! enddo
+  !              end do
+  !           end do
+  !        end do
+  !     end if
+  !  end if
+
+   if ( trace_water )then
+    !Calculate the water tracer ratio:
+    Rwt(:,:,:,:) = 1._r8 !initalize ratio
+    if(ptend_loc%lq(wtrc_iatype(1,iwtliq))) then !are water tracers being transported?
+       do m=2,wtrc_nwset !loop over water tracers
+          do k=1,pver
+             do i=1, ncol
+              ! do itype = 1, pwtype
+                Rwt(i,k,m,1) = wtrc_ratio(m, &
+                                     ptend_loc%q(i,k,wtrc_iatype(m,iwtliq)),   &
+                                     ptend_loc%q(i,k,wtrc_iatype(1,iwtliq)))
+                Rwt(i,k,m,2) = wtrc_ratio(m, &
+                                     ptend_loc%q(i,k,wtrc_iatype(m,iwtice)),   &
+                                     ptend_loc%q(i,k,wtrc_iatype(1,iwtice)))
+
+                Rwt(i,k,m,3) = wtrc_ratio(m, &
+                                     ptend_loc%q(i,k,wtrc_iatype(m,iwtstrain)),   &
+                                     ptend_loc%q(i,k,wtrc_iatype(1,iwtstrain)))
+                Rwt(i,k,m,4) = wtrc_ratio(m, &
+                                     ptend_loc%q(i,k,wtrc_iatype(m,iwtstsnow)),   &
+                                     ptend_loc%q(i,k,wtrc_iatype(1,iwtstsnow)))
+              ! enddo
+             end do
+          end do
+       end do
+    end if
+ end if
+
+   do k=1,pver
+    do i=1,ncol
+      ptend_loc%q(i,k,wtrc_iatype(1,iwtliq)) = ptend_loc%q(i,k,wtrc_bulk_indices(iwtliq))
+      ptend_loc%q(i,k,wtrc_iatype(1,iwtice)) = ptend_loc%q(i,k,wtrc_bulk_indices(iwtice))
+      ptend_loc%q(i,k,wtrc_iatype(1,iwtstrain)) = ptend_loc%q(i,k,wtrc_bulk_indices(iwtstrain))
+      ptend_loc%q(i,k,wtrc_iatype(1,iwtstsnow)) = ptend_loc%q(i,k,wtrc_bulk_indices(iwtstsnow))
+    end do
+  end do
+   
+   !Modify water tendencies via ratios:
+   do m = 2,wtrc_nwset
+      do k=1,pver
+         do i=1,ncol
+         ptend_loc%q(i,k,wtrc_iatype(m,iwtliq)) = Rwt(i,k,m,1)*ptend_loc%q(i,k,wtrc_bulk_indices(iwtliq))
+         ptend_loc%q(i,k,wtrc_iatype(m,iwtice)) = Rwt(i,k,m,2)*ptend_loc%q(i,k,wtrc_bulk_indices(iwtice))
+         ptend_loc%q(i,k,wtrc_iatype(m,iwtstrain)) = Rwt(i,k,m,3)*ptend_loc%q(i,k,wtrc_bulk_indices(iwtstrain))
+         ptend_loc%q(i,k,wtrc_iatype(m,iwtstsnow)) = Rwt(i,k,m,4)*ptend_loc%q(i,k,wtrc_bulk_indices(iwtstsnow))
+         end do
+      end do
+   end do  
+
+  
+
+
+!    if (trace_water) then
+! !     isOk = wtrc_check_h2o("after-convtran", state1, state1%q, ztodt)
+! !     isOk = wtrc_check_h2o_comp("after-convtran", state1, state1%q, ztodt)
+!     isOk = wtrc_check_tend_comp("after-convtran", state1, ptend_loc%q, ztodt)
+! end if
+! WT-block ends                  
    call t_stopf ('convtran1')
 
    call outfld('ZMDICE ',ptend_loc%q(1,1,ixcldice) ,pcols   ,lchnk   )
@@ -609,6 +960,11 @@ subroutine zm_conv_tend(pblh    ,mcon    ,cme     , &
 
    ! add tendency from this process to tend from other processes here
    call physics_ptend_sum(ptend_loc,ptend_all, ncol)
+!    if (trace_water) then
+!     isOk = wtrc_check_h2o("after-convtran", state1, state1%q, ztodt)
+!     isOk = wtrc_check_h2o_comp("after-convtran", state1, state1%q, ztodt)
+!     isOk = wtrc_check_tend_comp("after-convtran", state1, ptend_all%q, ztodt)
+! end if
 
    call physics_state_dealloc(state1)
    call physics_ptend_dealloc(ptend_loc)
@@ -626,6 +982,10 @@ subroutine zm_conv_tend_2( state,  ptend,  ztodt, pbuf,mu, eu, &
    use constituents,  only: pcnst, cnst_get_ind, cnst_is_convtran1
    use error_messages, only: alloc_err
    use physconst,      only: spec_class_aerosol, spec_class_gas 
+! WT-block begins 
+   use water_types,   only: iwtvap, iwtcvsnow, iwtcvrain
+   use water_tracer_vars, only: trace_water, wtrc_iatype, wtrc_nwset,wtrc_bulk_indices
+! WT-block ends
  
 ! Arguments
    type(physics_state), intent(in )   :: state          ! Physics state variables
@@ -659,9 +1019,29 @@ subroutine zm_conv_tend_2( state,  ptend,  ztodt, pbuf,mu, eu, &
    integer, intent(in) :: species_class(:)
 
 ! Local variables
-   integer :: i, lchnk, istat, m 
+   integer :: i, lchnk, istat
    integer :: nstep
    real(r8), dimension(pcols,pver) :: dpdry
+
+! WT-block begins 
+!water tracers (not necessary, could make variable optional - JN):
+   integer  :: m                            !loop variable 
+
+   ! physics buffer fields 
+   ! real(r8), pointer :: fracis(:,:,:)  ! fraction of transported species that are insoluble
+   ! real(r8), pointer :: mu(:,:)    ! (pcols,pver) 
+   ! real(r8), pointer :: eu(:,:)    ! (pcols,pver) 
+   ! real(r8), pointer :: du(:,:)    ! (pcols,pver) 
+   ! real(r8), pointer :: md(:,:)    ! (pcols,pver) 
+   ! real(r8), pointer :: ed(:,:)    ! (pcols,pver) 
+   ! real(r8), pointer :: dp(:,:)    ! (pcols,pver) 
+   ! real(r8), pointer :: dsubcld(:) ! (pcols) 
+   ! integer,  pointer :: jt(:)      ! (pcols) 
+   ! integer,  pointer :: maxg(:)    ! (pcols) 
+   ! integer,  pointer :: ideep(:)   ! (pcols) 
+   ! logical           :: lq(pcnst)
+   !-----------------------------------------------------------------------------------
+! WT-block ends   
 
 ! physics buffer fields 
    integer ifld
@@ -673,6 +1053,22 @@ subroutine zm_conv_tend_2( state,  ptend,  ztodt, pbuf,mu, eu, &
 !
   lq(:) = .FALSE.
   lq(:) = .not. cnst_is_convtran1(:)
+
+! WT-block begins 
+   !transport water tracer condensate (NOTE:  May be better to use is_convtran1 logical
+   !instead -JN):
+  if(trace_water) then
+   do m=iwtvap,iwtcvsnow
+     do i=1,wtrc_nwset
+      if (lq(wtrc_bulk_indices(m))) then
+       lq(wtrc_iatype(i,m)) = .TRUE.
+      else
+       lq(wtrc_iatype(i,m)) = .FALSE.
+      endif
+     end do
+   end do
+ end if
+! WT-block ends
   call physics_ptend_init(ptend, state%psetcols, 'convtran2', lq=lq )
 
 !
@@ -702,7 +1098,7 @@ subroutine zm_conv_tend_2( state,  ptend,  ztodt, pbuf,mu, eu, &
       ! initialize dpdry for call to convtran
       ! it is used for tracers of dry mixing ratio type
       dpdry = 0._r8
-      do i = 1,lengath
+      do i = 1, lengath
          dpdry(i,:) = state%pdeldry(ideep(i),:)/100._r8
       end do
 
@@ -710,7 +1106,7 @@ subroutine zm_conv_tend_2( state,  ptend,  ztodt, pbuf,mu, eu, &
       call convtran (lchnk,                                        &
                      ptend%lq,state%q, pcnst,  mu, md,   &
                      du, eu, ed, dp, dsubcld,  &
-                     jt,maxg,ideep, 1, lengath,  &
+                     jt, maxg, ideep, 1, lengath,  &
                      nstep,   fracis,  ptend%q, dpdry)
       call t_stopf ('convtran2')
    end if

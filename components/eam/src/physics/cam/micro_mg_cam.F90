@@ -618,7 +618,7 @@ subroutine micro_mg_cam_init(pbuf2d)
    use micro_mg_utils, only: micro_mg_utils_init
    use micro_mg1_0, only: micro_mg_init1_0 => micro_mg_init
    use micro_mg1_5, only: micro_mg_init1_5 => micro_mg_init
-   use micro_mg2_0, only: micro_mg_init2_0 => micro_mg_init
+   use micro_mg2_0_tags, only: micro_mg_init2_0 => micro_mg_init
 
    !-----------------------------------------------------------------------
    !
@@ -749,13 +749,13 @@ subroutine micro_mg_cam_init(pbuf2d)
       call addfld(bpcnst(ixsnow), (/ 'lev' /), 'A', 'kg/kg', trim(cnst_name(ixsnow))//' before physics' )
    end if
 
-   call addfld ('CME', (/ 'lev' /), 'A', 'kg/kg/s', 'Rate of cond-evap within the cloud'                      )
-   call addfld ('PRODPREC', (/ 'lev' /), 'A', 'kg/kg/s', 'Rate of conversion of condensate to precip'              )
-   call addfld ('EVAPPREC', (/ 'lev' /), 'A', 'kg/kg/s', 'Rate of evaporation of falling precip'                   )
-   call addfld ('EVAPSNOW', (/ 'lev' /), 'A', 'kg/kg/s', 'Rate of evaporation of falling snow'                     )
-   call addfld ('HPROGCLD', (/ 'lev' /), 'A', 'W/kg'    , 'Heating from prognostic clouds'                          )
-   call addfld ('FICE', (/ 'lev' /), 'A', '1', 'Fractional ice content within cloud'                     )
-   call addfld ('ICWMRST', (/ 'lev' /), 'A', 'kg/kg', 'Prognostic in-stratus water mixing ratio'                )
+   call addfld ('CME',        (/ 'lev' /), 'A', 'kg/kg/s',  'Rate of cond-evap within the cloud'                      )
+   call addfld ('PRODPREC',   (/ 'lev' /), 'A', 'kg/kg/s',  'Rate of conversion of condensate to precip'              )
+   call addfld ('EVAPPREC',   (/ 'lev' /), 'A', 'kg/kg/s',  'Rate of evaporation of falling precip'                   )
+   call addfld ('EVAPSNOW',   (/ 'lev' /), 'A', 'kg/kg/s',  'Rate of evaporation of falling snow'                     )
+   call addfld ('HPROGCLD',   (/ 'lev' /), 'A', 'W/kg'    , 'Heating from prognostic clouds'                          )
+   call addfld ('FICE',       (/ 'lev' /), 'A', '1',        'Fractional ice content within cloud'                     )
+   call addfld ('ICWMRST',  (/ 'lev' /), 'A', 'kg/kg',  'Prognostic in-stratus water mixing ratio'                )
    call addfld ('ICIMRST', (/ 'lev' /), 'A', 'kg/kg', 'Prognostic in-stratus ice mixing ratio'                  )
 
    ! MG microphysics diagnostics
@@ -1076,13 +1076,22 @@ subroutine micro_mg_cam_tend(state, ptend, dtime, pbuf)
         micro_mg_get_cols1_0 => micro_mg_get_cols
    use micro_mg1_5, only: micro_mg_tend1_5 => micro_mg_tend, &
         micro_mg_get_cols1_5 => micro_mg_get_cols
-   use micro_mg2_0, only: micro_mg_tend2_0 => micro_mg_tend, &
+!    use micro_mg2_0, only: micro_mg_tend2_0 => micro_mg_tend, &
+!         micro_mg_get_cols2_0 => micro_mg_get_cols
+    use micro_mg2_0_tags, only: micro_mg_tend2_0 => micro_mg_tend, &
         micro_mg_get_cols2_0 => micro_mg_get_cols
 
    use physics_buffer,  only: pbuf_col_type_index
    use subcol,          only: subcol_field_avg
 
    use output_aerocom_aie, only: do_aerocom_ind3
+
+   use water_tracer_vars, only: trace_water, wtrc_indices, &
+                                wtrc_ncnst, wtrc_nwset, &
+                                wtrc_srfpcp_indices, wtrc_iatype
+   use water_tracers,     only: wtrc_apply_rates, wtrc_apply_rates_mg1, wtrc_init_rates, wtrc_add_rates, &
+                                wtrc_add_rates, wtrc_mg_inter, wtrc_check_h2o,wtrc_check_tend_comp, wtrc_check_h2o_comp, wtrc_mass_fixer
+   use water_types,       only: pwtype, iwtvap, iwtliq, iwtice, iwtstrain, iwtstsnow
 
 
    type(physics_state),         intent(in)    :: state
@@ -1138,6 +1147,17 @@ subroutine micro_mg_cam_tend(state, ptend, dtime, pbuf)
    real(r8), target :: qsten(state%psetcols,pver)
    real(r8), target :: nrten(state%psetcols,pver)
    real(r8), target :: nsten(state%psetcols,pver)
+
+   ! Water tracers code block begins 
+   real(r8), target :: wtrc_qvlat(state%psetcols,pver, wtrc_nwset)
+   real(r8), target :: wtrc_qcten(state%psetcols,pver, wtrc_nwset)
+   real(r8), target :: wtrc_qiten(state%psetcols,pver, wtrc_nwset)
+
+   real(r8), target :: wtrc_qrten(state%psetcols,pver, wtrc_nwset)
+   real(r8), target :: wtrc_qsten(state%psetcols,pver, wtrc_nwset)
+   real(r8), target :: wtrc_prect(state%psetcols, wtrc_nwset)
+   real(r8), target :: wtrc_preci(state%psetcols, wtrc_nwset)
+   ! Water tracers code block ends
 
    real(r8), target :: prect(state%psetcols)
    real(r8), target :: preci(state%psetcols)
@@ -1218,6 +1238,14 @@ subroutine micro_mg_cam_tend(state, ptend, dtime, pbuf)
    real(r8), allocatable :: packed_qs(:,:)
    real(r8), allocatable :: packed_ns(:,:)
 
+   ! Water tracers code block begins 
+   real(r8), allocatable :: packed_wtrc_q(:,:,:)
+   real(r8), allocatable :: packed_wtrc_qc(:,:,:)
+   real(r8), allocatable :: packed_wtrc_qi(:,:,:)
+   real(r8), allocatable :: packed_wtrc_qr(:,:,:)
+   real(r8), allocatable :: packed_wtrc_qs(:,:,:)
+   ! Water tracers code block ends
+
    real(r8), allocatable :: packed_relvar(:,:)
    real(r8), allocatable :: packed_accre_enhan(:,:)
 
@@ -1263,6 +1291,18 @@ subroutine micro_mg_cam_tend(state, ptend, dtime, pbuf)
    real(r8), allocatable, target :: packed_qstend(:,:)
    real(r8), allocatable, target :: packed_nrtend(:,:)
    real(r8), allocatable, target :: packed_nstend(:,:)
+
+
+   ! Water tracers code block begins 
+   real(r8), allocatable:: packed_wtrc_qvlat(:,:,:)
+   real(r8), allocatable:: packed_wtrc_qctend(:,:,:)
+   real(r8), allocatable:: packed_wtrc_qitend(:,:,:)
+
+   real(r8), allocatable:: packed_wtrc_qrtend(:,:,:)
+   real(r8), allocatable:: packed_wtrc_qstend(:,:,:)
+   real(r8), allocatable:: packed_wtrc_prect(:,:)
+   real(r8), allocatable:: packed_wtrc_preci(:,:)
+   ! Water tracers code block ends
 
    real(r8), allocatable, target :: packed_prect(:)
    real(r8), allocatable, target :: packed_preci(:)
@@ -1336,6 +1376,23 @@ subroutine micro_mg_cam_tend(state, ptend, dtime, pbuf)
    real(r8), allocatable, target :: packed_mu(:,:)
    real(r8), allocatable, target :: packed_des(:,:)
    real(r8), allocatable, target :: packed_dei(:,:)
+
+   ! Local packed arrays for water tracers/isotopes
+   real(r8), allocatable, target :: packed_preo(:,:)              ! rain re-evaporation (kg/kg/sec)
+   real(r8), allocatable, target :: packed_prdso(:,:)             ! snow sublimation (kg/kg/sec)
+   real(r8), allocatable, target :: packed_frzro(:,:)             ! rain freezing (kg/kg/sec)
+   real(r8), allocatable, target :: packed_frzrpst(:,:)           ! rain freezing post-sedimentation (kg/kg/sec)
+   real(r8), allocatable, target :: packed_meltso(:,:)            ! snow melting  (kg/kg/sec)
+   real(r8), allocatable, target :: packed_meltspst(:,:)          ! snow melting post-sedimentation (kg/kg/sec)
+   real(r8), allocatable, target :: packed_wtfc(:,:)              ! Initial cloud liquid fall velocity
+   real(r8), allocatable, target :: packed_wtfi(:,:)              ! Initial cloud ice fall velocity
+   real(r8), allocatable, target :: packed_wtfr(:,:)              ! Initial cloud rain fall velocity
+   real(r8), allocatable, target :: packed_wtfs(:,:)              ! Initial cloud snow fall velocity
+   real(r8), allocatable, target :: packed_wtprelat(:,:)          ! Latent heat change due to pre_rates
+   real(r8), allocatable, target :: packed_wtsedlat(:,:)          ! Latent heat change during sedimenntation
+   real(r8), allocatable, target :: packed_wtpostlat(:,:)         ! Latent heat change due to post_rates 
+   real(r8), allocatable, target :: packed_wtfri_pre(:,:)         ! Is freezing rain being added to cloud ice?
+   real(r8), allocatable, target :: packed_wtfri_post(:,:)        ! Is freezing rain being added to cloud ice post-sed?
 
    ! Dummy arrays for cases where we throw away the MG version and
    ! recalculate sizes on the CAM grid to avoid time/subcolumn averaging
@@ -1504,6 +1561,52 @@ subroutine micro_mg_cam_tend(state, ptend, dtime, pbuf)
    real(r8) :: prcio_grid(pcols,pver)
    real(r8) :: praio_grid(pcols,pver)
 
+   !Water tracers/isotopes:
+   !----------------------
+   !precipiation variables:
+   integer  ::  m 
+   real(r8) :: wtprec(pcols)
+   real(r8) ::  wtprecr(pcols,wtrc_nwset)
+   real(r8) ::  wtpreci(pcols,wtrc_nwset)
+   real(r8) ::  wtprecr_itr(pcols,wtrc_nwset)
+   real(r8) ::  wtpreci_itr(pcols,wtrc_nwset)
+   real(r8), pointer, dimension(:) :: wtsrfpcp    
+ 
+  !Unpacked surface variables:
+   real(r8) ::  cmei_unp(pcols,pver)
+   real(r8) ::  preo_unp(pcols,pver)
+   real(r8) ::  prdso_unp(pcols,pver)
+   real(r8) ::  mnuccco_unp(pcols,pver)
+   real(r8) ::  mnuccto_unp(pcols,pver)
+   real(r8) ::  msacwio_unp(pcols,pver)
+   real(r8) ::  prao_unp(pcols,pver)
+   real(r8) ::  prco_unp(pcols,pver)
+   real(r8) ::  psacwso_unp(pcols,pver)
+   real(r8) ::  bergo_unp(pcols,pver)
+   real(r8) ::  bergso_unp(pcols,pver)
+   real(r8) ::  praio_unp(pcols,pver)
+   real(r8) ::  prcio_unp(pcols,pver)
+   real(r8) ::  pracso_unp(pcols,pver)
+   real(r8) ::  mnuccro_unp(pcols,pver)
+   real(r8) ::  qcreso_unp(pcols,pver)
+   real(r8) ::  qireso_unp(pcols,pver)
+   real(r8) ::  homoo_unp(pcols,pver)
+   real(r8) ::  melto_unp(pcols,pver)
+   real(r8) ::  frzrpst_unp(pcols,pver)
+   real(r8) ::  meltspst_unp(pcols,pver)
+   real(r8) ::  wtfri_pre_unp(pcols,pver)
+   real(r8) ::  wtfri_post_unp(pcols,pver)
+   real(r8) ::  frzro_unp(pcols,pver)
+   real(r8) ::  meltso_unp(pcols,pver)
+   real(r8) ::  wtfc_unp(pcols,pver)
+   real(r8) ::  wtfi_unp(pcols,pver)
+   real(r8) ::  wtfr_unp(pcols,pver)
+   real(r8) ::  wtfs_unp(pcols,pver) 
+   real(r8) ::  wtprelat_unp(pcols,pver)
+   real(r8) ::  wtsedlat_unp(pcols,pver)
+   real(r8) ::  wtpostlat_unp(pcols,pver)
+   !----------------------
+
    real(r8) :: nc_grid(pcols,pver)
    real(r8) :: ni_grid(pcols,pver)
    real(r8) :: qr_grid(pcols,pver)
@@ -1564,12 +1667,73 @@ subroutine micro_mg_cam_tend(state, ptend, dtime, pbuf)
 
    real(r8), pointer :: pckdptr(:,:)
 
+   ! Local variables for water tracers/isotopes
+
+   real(r8), target :: preo(state%psetcols,pver)                              ! rain re-evaporation (kg/kg/sec)
+   real(r8), target :: prdso(state%psetcols,pver)                             ! snow sublimation (kg/kg/sec)
+   real(r8), target :: frzro(state%psetcols,pver)                             ! rain freezing (kg/kg/sec)
+   real(r8), target :: frzrpst(state%psetcols,pver)                           ! rain freezing post-sedimentation (kg/kg/sec)
+   real(r8), target :: meltso(state%psetcols,pver)                            ! snow melting  (kg/kg/sec)
+   real(r8), target :: meltspst(state%psetcols,pver)                          ! snow melting post-sedimentation (kg/kg/sec)
+   real(r8), target :: wtfc(state%psetcols,pver)                              ! Initial cloud liquid fall velocity
+   real(r8), target :: wtfi(state%psetcols,pver)                              ! Initial cloud ice fall velocity
+   real(r8), target :: wtfr(state%psetcols,pver)                              ! Initial cloud rain fall velocity
+   real(r8), target :: wtfs(state%psetcols,pver)                              ! Initial cloud snow fall velocity
+   real(r8), target :: wtprelat(state%psetcols,pver)                          ! Latent heat change due to pre_rates
+   real(r8), target :: wtsedlat(state%psetcols,pver)                          ! Latent heat changes during sedimentation
+   real(r8), target :: wtpostlat(state%psetcols,pver)                         ! Latent heat change due to post_rates 
+   real(r8), target :: wtfri_pre(state%psetcols,pver)                         ! Is freezing rain being added to cloud ice?
+   real(r8), target :: wtfri_post(state%psetcols,pver)                        ! Is freezing rain being added to cloud ice post-sed?
+   
+   ! Water tracers/isotopes on the grid level
+   real(r8) :: pre_rates_grid(pcols,pver,pwtype,pwtype,pwtype)    ! Process rates (kg/kg/sec)
+   real(r8) :: sed_rates_grid(pcols,pver,pwtype)                  ! Sedimentation rates (kg/kg/sec)
+   real(r8) :: post_rates_grid(pcols,pver,pwtype,pwtype,pwtype)   ! Process rates (kg/kg/sec)
+   real(r8) :: pcmei_grid(pcols,pver)                             ! Positive cmeiout - deposition
+   real(r8) :: ncmei_grid(pcols,pver)                             ! Negative cmeiout - sublimation
+   real(r8) :: pmelts_grid(pcols,pver)                            ! Positive melts - melting
+   real(r8) :: nmelts_grid(pcols,pver)                            ! Negative melts (freezing?)
+   logical  :: isOk                                               ! Flag indicating test success
+
+   ! above water tracers/isotopes arrays on the grid level
+
+   real(r8), pointer :: preo_grid(:,:)                            ! rain re-evaporation (kg/kg/sec)
+   real(r8), pointer :: prdso_grid(:,:)                           ! snow sublimation (kg/kg/sec)
+   real(r8), pointer :: frzro_grid(:,:)                           ! rain freezing (kg/kg/sec)
+   real(r8), pointer :: frzrpst_grid(:,:)                         ! rain freezing post-sedimentation (kg/kg/sec) 
+   real(r8), pointer :: meltso_grid(:,:)                          ! snow melting  (kg/kg/sec)
+   real(r8), pointer :: meltspst_grid(:,:)                        ! snow melting post-sedimentation (kg/kg/sec)
+   real(r8), pointer :: wtfc_grid(:,:)                            ! Initial cloud liquid fall velocity
+   real(r8), pointer :: wtfi_grid(:,:)                            ! Initial cloud ice fall velocity
+   real(r8), pointer :: wtfr_grid(:,:)                            ! Initial cloud rain fall velocity
+   real(r8), pointer :: wtfs_grid(:,:)                            ! Initial cloud snow fall velocity
+   real(r8), pointer :: wtprelat_grid(:,:)                        ! Latent heat change due to pre_rates
+   real(r8), pointer :: wtsedlat_grid(:,:)                        ! Latent heat change during sedimentation
+   real(r8), pointer :: wtpostlat_grid(:,:)                       ! Latent heat change due to post_rates 
+   real(r8), pointer :: wtfri_pre_grid(:,:)                       ! Is freezing rain being added to cloud ice?
+   real(r8), pointer :: wtfri_post_grid(:,:)                      ! Is freezing rain being added to cloud ice post-sed?
+
+   real(r8), pointer :: mnuccro_grid(:,:)
+   real(r8), pointer :: pracso_grid(:,:)
+   real(r8), pointer :: qcsedten_grid(:,:)
+   real(r8), pointer :: qisedten_grid(:,:)
+   real(r8), pointer :: qrsedten_grid(:,:)
+   real(r8), pointer :: qssedten_grid(:,:)
+   real(r8), pointer :: alst_mic_grid(:,:)
+   real(r8), pointer :: aist_mic_grid(:,:)
+   character(len=*), parameter :: subname = 'micro_mg_cam_tend'
+
    integer :: autocl_idx, accretl_idx  ! Aerocom IND3
    integer :: cldliqbf_idx, cldicebf_idx, numliqbf_idx, numicebf_idx
+
+!    logical :: isOk
 
    !-------------------------------------------------------------------------------
 
    call t_startf('micro_mg_cam_tend_init')
+
+   wtrc_prect(:,:) = 0.0_r8
+   wtrc_preci(:,:) = 0.0_r8
 
    ! Find the number of levels used in the microphysics.
    nlev  = pver - top_lev + 1
@@ -1713,7 +1877,6 @@ subroutine micro_mg_cam_tend(state, ptend, dtime, pbuf)
       if (rate1_cw2pr_st_idx > 0) then
          call pbuf_get_field(pbuf, rate1_cw2pr_st_idx, rate1ord_cw2pr_st_grid)
       end if
-
    end if
 
    !-----------------------
@@ -1780,6 +1943,20 @@ subroutine micro_mg_cam_tend(state, ptend, dtime, pbuf)
       lq(ixnumsnow) = .true.
    end if
 
+   !Water tracers:
+   if ( trace_water ) then
+      ! do i=1,wtrc_ncnst
+      !   lq(wtrc_indices(i)) = .true.
+      ! end do
+    do m = 1, wtrc_nwset
+      lq(wtrc_iatype(m,iwtvap)) = .true.
+      lq(wtrc_iatype(m,iwtliq)) = .true.
+      lq(wtrc_iatype(m,iwtice)) = .true.
+      lq(wtrc_iatype(m,iwtstrain)) = .true.
+      lq(wtrc_iatype(m,iwtstsnow)) = .true.
+    enddo
+   end if
+
    ! the name 'cldwat' triggers special tests on cldliq
    ! and cldice in physics_update
    call physics_ptend_init(ptend, psetcols, "cldwat_mic", ls=.true., lq=lq)
@@ -1802,6 +1979,32 @@ subroutine micro_mg_cam_tend(state, ptend, dtime, pbuf)
 
    packer = MGPacker(psetcols, pver, mgcols, top_lev)
    post_proc = MGPostProc(packer)
+
+if (trace_water) then
+      ! Water tracers code block begins 
+   allocate(packed_wtrc_qvlat(mgncol,nlev, wtrc_nwset))
+   allocate(packed_wtrc_qctend(mgncol,nlev, wtrc_nwset))
+   allocate(packed_wtrc_qitend(mgncol,nlev, wtrc_nwset))
+
+   if (micro_mg_version > 1) then
+      allocate(packed_wtrc_qrtend(mgncol,nlev, wtrc_nwset))
+      allocate(packed_wtrc_qstend(mgncol,nlev, wtrc_nwset))
+   end if
+
+   allocate(packed_wtrc_prect(mgncol, wtrc_nwset))
+   allocate(packed_wtrc_preci(mgncol, wtrc_nwset))
+
+   do m = 1, wtrc_nwset
+        call post_proc%add_field(p(wtrc_qvlat(:,:,m)), p(packed_wtrc_qvlat(:,:,m)))
+        call post_proc%add_field(p(wtrc_qcten(:,:,m)), p(packed_wtrc_qctend(:,:,m)))
+        call post_proc%add_field(p(wtrc_qiten(:,:,m)), p(packed_wtrc_qitend(:,:,m)))
+        call post_proc%add_field(p(wtrc_qrten(:,:,m)), p(packed_wtrc_qrtend(:,:,m)))
+        call post_proc%add_field(p(wtrc_qsten(:,:,m)), p(packed_wtrc_qstend(:,:,m)))
+        call post_proc%add_field(p(wtrc_prect(:,m)), p(packed_wtrc_prect(:,m)))
+        call post_proc%add_field(p(wtrc_preci(:,m)), p(packed_wtrc_preci(:,m)))
+
+   enddo
+endif
 
    allocate(packed_rate1ord_cw2pr_st(mgncol,nlev))
    pckdptr => packed_rate1ord_cw2pr_st ! workaround an apparent pgi compiler bug on goldbach
@@ -1991,6 +2194,60 @@ subroutine micro_mg_cam_tend(state, ptend, dtime, pbuf)
    call post_proc%add_field(p(prer_evap), p(packed_prer_evap), &
         accum_method=accum_null)
 
+        if (trace_water) then !Are water tracers enabled?
+           !NOTE:  These calls may not be needed (or only needed
+           !       for MG1 + water tracers). -JN
+         allocate(packed_preo(mgncol,nlev))
+           call post_proc%add_field(p(preo), p(packed_preo), &
+             accum_method=accum_null)
+         allocate(packed_prdso(mgncol,nlev))
+           call post_proc%add_field(p(prdso), p(packed_prdso), &
+             accum_method=accum_null)
+         allocate(packed_meltso(mgncol,nlev))
+           call post_proc%add_field(p(meltso), p(packed_meltso), &
+             accum_method=accum_null)
+         allocate(packed_wtfc(mgncol,nlev))
+           call post_proc%add_field(p(wtfc), p(packed_wtfc), &
+             accum_method=accum_null)
+         allocate(packed_wtfi(mgncol,nlev))
+           call post_proc%add_field(p(wtfi), p(packed_wtfi), &
+             accum_method=accum_null)
+         allocate(packed_wtfr(mgncol,nlev))
+           call post_proc%add_field(p(wtfr), p(packed_wtfr), &
+             accum_method=accum_null)
+         allocate(packed_wtfs(mgncol,nlev))
+           call post_proc%add_field(p(wtfs), p(packed_wtfs), &
+             accum_method=accum_null)
+         allocate(packed_wtprelat(mgncol,nlev))
+           call post_proc%add_field(p(wtprelat), p(packed_wtprelat), &
+             accum_method=accum_null)
+         allocate(packed_wtsedlat(mgncol,nlev))
+           call post_proc%add_field(p(wtsedlat), p(packed_wtsedlat), &
+             accum_method=accum_null)
+         allocate(packed_wtpostlat(mgncol,nlev))
+           call post_proc%add_field(p(wtpostlat), p(packed_wtpostlat), &
+             accum_method=accum_null)
+         allocate(packed_frzro(mgncol,nlev))
+           call post_proc%add_field(p(frzro), p(packed_frzro), &
+             accum_method=accum_null)
+         allocate(packed_frzrpst(mgncol,nlev))
+           call post_proc%add_field(p(frzrpst), p(packed_frzrpst), &
+             accum_method=accum_null)
+         allocate(packed_meltspst(mgncol,nlev))
+           call post_proc%add_field(p(meltspst), p(packed_meltspst), &
+             accum_method=accum_null)
+         allocate(packed_wtfri_pre(mgncol,nlev))
+           call post_proc%add_field(p(wtfri_pre), p(packed_wtfri_pre), &
+             accum_method=accum_null)
+         allocate(packed_wtfri_post(mgncol,nlev))
+           call post_proc%add_field(p(wtfri_post), p(packed_wtfri_post), &
+             accum_method=accum_null)
+     
+          !initialize precipitation variables:
+           wtprecr(:ncol,:) = 0._r8
+           wtpreci(:ncol,:) = 0._r8
+        end if     
+
    ! Allocate all the dummies with MG sizes.
    allocate(rel_fn_dum(mgncol,nlev))
    allocate(dsout2_dum(mgncol,nlev))
@@ -2068,6 +2325,18 @@ subroutine micro_mg_cam_tend(state, ptend, dtime, pbuf)
       allocate(packed_qs(mgncol,nlev))
       allocate(packed_ns(mgncol,nlev))
    end if
+
+   ! Water tracers code block begins 
+   if (trace_water) then
+        allocate(packed_wtrc_q(mgncol,nlev, wtrc_nwset))
+        allocate(packed_wtrc_qc(mgncol,nlev, wtrc_nwset))
+        allocate(packed_wtrc_qi(mgncol,nlev, wtrc_nwset))
+   if (micro_mg_version > 1) then
+      allocate(packed_wtrc_qr(mgncol,nlev, wtrc_nwset))
+      allocate(packed_wtrc_qs(mgncol,nlev, wtrc_nwset))
+   end if
+   endif
+   ! Water tracers code block ends
    call t_stopf('micro_mg_cam_tend_init')
 
    call t_startf('micro_mg_cam_tend_loop')
@@ -2081,11 +2350,50 @@ subroutine micro_mg_cam_tend(state, ptend, dtime, pbuf)
       packed_qi = packer%pack(state_loc%q(:,:,ixcldice))
       packed_ni = packer%pack(state_loc%q(:,:,ixnumice))
       if (micro_mg_version > 1) then
-         packed_qr = packer%pack(state_loc%q(:,:,ixrain))
-         packed_nr = packer%pack(state_loc%q(:,:,ixnumrain))
-         packed_qs = packer%pack(state_loc%q(:,:,ixsnow))
-         packed_ns = packer%pack(state_loc%q(:,:,ixnumsnow))
+        packed_qr = packer%pack(state_loc%q(:,:,ixrain))
+        packed_nr = packer%pack(state_loc%q(:,:,ixnumrain))
+        packed_qs = packer%pack(state_loc%q(:,:,ixsnow))
+        packed_ns = packer%pack(state_loc%q(:,:,ixnumsnow))
       end if
+
+      if (trace_water) then
+        ! call wtrc_mass_fixer(state_loc)
+        ! isOk = wtrc_check_h2o_comp("before micro_mg", state_loc, state_loc%q,1._r8)
+        do m = 1, wtrc_nwset
+
+          packed_wtrc_q(:,:,m) = packer%pack(state_loc%q(:,:,wtrc_iatype(m,iwtvap)))
+            packed_wtrc_qc(:,:,m) = packer%pack(state_loc%q(:,:,wtrc_iatype(m,iwtliq)))
+            packed_wtrc_qi(:,:,m) = packer%pack(state_loc%q(:,:,wtrc_iatype(m,iwtice)))
+            if (micro_mg_version > 1) then
+              packed_wtrc_qr(:,:,m) = packer%pack(state_loc%q(:,:,wtrc_iatype(m,iwtstrain)))
+              packed_wtrc_qs(:,:,m) = packer%pack(state_loc%q(:,:,wtrc_iatype(m,iwtstsnow)))
+            end if
+          ! if (m.eq.1) then
+          
+          !   packed_wtrc_q(:,:,m) = packed_q(:,:)
+          !   packed_wtrc_qc(:,:,m) = packed_qc(:,:)
+          !   packed_wtrc_qi(:,:,m) = packed_qi(:,:)
+          !   if (micro_mg_version > 1) then
+          !     packed_wtrc_qr(:,:,m) = packed_qr(:,:)
+          !     packed_wtrc_qs(:,:,m) = packed_qs(:,:)
+          !   end if
+          ! else
+
+          
+          !   packed_wtrc_q(:,:,m) = packed_q(:,:) * 0.5_r8
+          !   packed_wtrc_qc(:,:,m) = packed_qc(:,:) * 0.5_r8
+          !   packed_wtrc_qi(:,:,m) = packed_qi(:,:) * 0.5_r8
+          !   if (micro_mg_version > 1) then
+          !     packed_wtrc_qr(:,:,m) = packed_qr(:,:) * 0.5_r8
+          !     packed_wtrc_qs(:,:,m) = packed_qs(:,:) * 0.5_r8
+          !   end if
+          ! endif
+
+        enddo
+
+      endif
+
+
 
       select case (micro_mg_version)
       case (1)
@@ -2157,60 +2465,75 @@ subroutine micro_mg_cam_tend(state, ptend, dtime, pbuf)
 
             call t_startf('micro_mg_tend2')
             call micro_mg_tend2_0( &
-                 mgncol,         nlev,           dtime/num_steps,&
-                 packed_t,               packed_q,               &
-                 packed_qc,              packed_qi,              &
-                 packed_nc,              packed_ni,              &
-                 packed_qr,              packed_qs,              &
-                 packed_nr,              packed_ns,              &
-                 packed_relvar,          packed_accre_enhan,     &
-		 precip_off,                                     &
-                 packed_p,               packed_pdel,            &
-                 packed_cldn,    packed_liqcldf, packed_icecldf, &
-                 packed_rate1ord_cw2pr_st,                       &
-                 packed_naai,            packed_npccn,           &
-                 packed_rndst,           packed_nacon,           &
-                 packed_tlat,            packed_qvlat,           &
-                 packed_qctend,          packed_qitend,          &
-                 packed_nctend,          packed_nitend,          &
-                 packed_qrtend,          packed_qstend,          &
-                 packed_nrtend,          packed_nstend,          &
-                 packed_rel,     rel_fn_dum,     packed_rei,     &
-                 packed_prect,           packed_preci,           &
-                 packed_nevapr,          packed_evapsnow,        &
-                 packed_prain,           packed_prodsnow,        &
-                 packed_cmeout,          packed_dei,             &
-                 packed_mu,              packed_lambdac,         &
-                 packed_qsout,           packed_des,             &
-                 packed_cflx,    packed_iflx,                    &
-                 packed_rflx,    packed_sflx,    packed_qrout,   &
-                 reff_rain_dum,          reff_snow_dum,          &
-                 packed_qcsevap, packed_qisevap, packed_qvres,   &
-                 packed_cmei,    packed_vtrmc,   packed_vtrmi,   &
-                 packed_umr,             packed_ums,             &
-                 packed_qcsedten,        packed_qisedten,        &
-                 packed_qrsedten,        packed_qssedten,        &
-                 packed_pra,             packed_prc,             &
-                 packed_mnuccc,  packed_mnucct,  packed_msacwi,  &
-                 packed_psacws,  packed_bergs,   packed_berg,    &
-                 packed_melt,            packed_homo,            &
-                 packed_qcres,   packed_prci,    packed_prai,    &
-                 packed_qires,   packed_mnuccr,  packed_pracs,   &
-                 packed_meltsdt, packed_frzrdt,  packed_mnuccd,  &
-                 packed_nrout,           packed_nsout,           &
-                 packed_refl,    packed_arefl,   packed_areflz,  &
-                 packed_frefl,   packed_csrfl,   packed_acsrfl,  &
-                 packed_fcsrfl,          packed_rercld,          &
-                 packed_ncai,            packed_ncal,            &
-                 packed_qrout2,          packed_qsout2,          &
-                 packed_nrout2,          packed_nsout2,          &
-                 drout_dum,              dsout2_dum,             &
-                 packed_freqs,           packed_freqr,           &
-                 packed_nfice,           packed_qcrat,           &
-                 errstring, &
-                 packed_tnd_qsnow,packed_tnd_nsnow,packed_re_ice,&
-		 packed_prer_evap,                                     &
-                 packed_frzimm,  packed_frzcnt,  packed_frzdep   )
+            mgncol,         nlev,           dtime/num_steps,&
+            packed_t,               packed_q,               &
+            packed_qc,              packed_qi,              &
+            packed_nc,              packed_ni,              &
+            packed_qr,              packed_qs,              &
+            packed_nr,              packed_ns,              &
+            packed_relvar,          packed_accre_enhan,     &
+    precip_off,                                     &
+            packed_p,               packed_pdel,            &
+            packed_cldn,    packed_liqcldf, packed_icecldf, &
+            packed_rate1ord_cw2pr_st,                       &
+            packed_naai,            packed_npccn,           &
+            packed_rndst,           packed_nacon,           &
+            packed_tlat,            packed_qvlat,           &
+            packed_qctend,          packed_qitend,          &
+            packed_nctend,          packed_nitend,          &
+            packed_qrtend,          packed_qstend,          &
+            packed_nrtend,          packed_nstend,          &
+            packed_rel,     rel_fn_dum,     packed_rei,     &
+            packed_prect,           packed_preci,           &
+            packed_nevapr,          packed_evapsnow,        &
+            packed_prain,           packed_prodsnow,        &
+            packed_cmeout,          packed_dei,             &
+            packed_mu,              packed_lambdac,         &
+            packed_qsout,           packed_des,             &
+            packed_cflx,    packed_iflx,                    &
+            packed_rflx,    packed_sflx,    packed_qrout,   &
+            reff_rain_dum,          reff_snow_dum,          &
+            packed_qcsevap, packed_qisevap, packed_qvres,   &
+            packed_cmei,    packed_vtrmc,   packed_vtrmi,   &
+            packed_umr,             packed_ums,             &
+            packed_qcsedten,        packed_qisedten,        &
+            packed_qrsedten,        packed_qssedten,        &
+            packed_pra,             packed_prc,             &
+            packed_mnuccc,  packed_mnucct,  packed_msacwi,  &
+            packed_psacws,  packed_bergs,   packed_berg,    &
+            packed_melt,            packed_homo,            &
+            packed_qcres,   packed_prci,    packed_prai,    &
+            packed_qires,   packed_mnuccr,  packed_pracs,   &
+            packed_meltsdt, packed_frzrdt,  packed_mnuccd,  &
+            packed_nrout,           packed_nsout,           &
+            packed_refl,    packed_arefl,   packed_areflz,  &
+            packed_frefl,   packed_csrfl,   packed_acsrfl,  &
+            packed_fcsrfl,          packed_rercld,          &
+            packed_ncai,            packed_ncal,            &
+            packed_qrout2,          packed_qsout2,          &
+            packed_nrout2,          packed_nsout2,          &
+            drout_dum,              dsout2_dum,             &
+            packed_freqs,           packed_freqr,           &
+            packed_nfice,           packed_qcrat,           &
+            errstring, &
+            packed_tnd_qsnow,packed_tnd_nsnow,packed_re_ice,&
+            packed_prer_evap,                               &
+            packed_frzimm,  packed_frzcnt,  packed_frzdep,  &
+            packed_wtrc_q, packed_wtrc_qc, packed_wtrc_qi,  &
+            packed_wtrc_qr, packed_wtrc_qs,                 &
+            packed_wtrc_qvlat, packed_wtrc_qctend,          &
+            packed_wtrc_qitend, packed_wtrc_qrtend,         &
+            packed_wtrc_qstend, packed_wtrc_prect,          &
+            packed_wtrc_preci )
+
+        do i = 1, mgncol
+          if (packed_wtrc_prect(i,2) .lt. 0.0_r8) then
+            call endrun('negative precip ERROR')
+          endif
+        enddo
+        packed_preo = packed_prer_evap
+        packed_prdso = packed_evapsnow
+         !--AG
             call t_stopf('micro_mg_tend2')
          end select
       end select
@@ -2219,6 +2542,27 @@ subroutine micro_mg_cam_tend(state, ptend, dtime, pbuf)
 
       call physics_ptend_init(ptend_loc, psetcols, "micro_mg", &
                               ls=.true., lq=lq)
+
+
+        qvlat = packer%unpack(packed_qvlat, 0._r8)
+        qiten = packer%unpack(packed_qitend, 0._r8)
+        qcten = packer%unpack(packed_qctend, 0._r8)
+        qsten = packer%unpack(packed_qstend, 0._r8)
+        qrten = packer%unpack(packed_qrtend, 0._r8)
+
+        if (trace_water) then
+             do m = 1, wtrc_nwset
+                wtrc_qvlat(:,:,m) = packer%unpack(packed_wtrc_qvlat(:,:,m), 0._r8)
+                wtrc_qiten(:,:,m) = packer%unpack(packed_wtrc_qitend(:,:,m), 0._r8)
+                wtrc_qcten(:,:,m) = packer%unpack(packed_wtrc_qctend(:,:,m), 0._r8)
+                wtrc_qsten(:,:,m) = packer%unpack(packed_wtrc_qstend(:,:,m), 0._r8)
+                wtrc_qrten(:,:,m) = packer%unpack(packed_wtrc_qrtend(:,:,m), 0._r8)
+                ! wtrc_preci(:,m) = wtrc_preci(:,m) + packer%unpack(packed_wtrc_preci(:,m), 0.0_r8)
+                ! wtrc_prect(:,m) = wtrc_prect(:,m) + packer%unpack(packed_wtrc_prect(:,m), 0.0_r8)
+             enddo
+        endif
+
+
 
       ! Set local tendency.
       ptend_loc%s               = packer%unpack(packed_tlat, 0._r8)
@@ -2247,6 +2591,26 @@ subroutine micro_mg_cam_tend(state, ptend, dtime, pbuf)
               -state_loc%q(:,:,ixnumsnow)/(dtime/num_steps))
       end if
 
+      if (trace_water .and. (micro_mg_version == 2)) then
+         do m = 1, wtrc_nwset
+
+            ptend_loc%q(:,:,wtrc_iatype(m,iwtvap))        = packer%unpack(packed_wtrc_qvlat(:,:,m), 0._r8)
+            ptend_loc%q(:,:,wtrc_iatype(m,iwtliq)) = packer%unpack(packed_wtrc_qctend(:,:,m), 0._r8)
+            ptend_loc%q(:,:,wtrc_iatype(m,iwtice)) = packer%unpack(packed_wtrc_qitend(:,:,m), 0._r8)
+
+            if (micro_mg_version > 1) then
+                ptend_loc%q(:,:,wtrc_iatype(m,iwtstrain))    = packer%unpack(packed_wtrc_qrtend(:,:,m), 0._r8)
+                ptend_loc%q(:,:,wtrc_iatype(m,iwtstsnow))    = packer%unpack(packed_wtrc_qstend(:,:,m), 0._r8)
+            end if
+
+
+             
+         enddo
+      endif
+      ! if (trace_water) then
+      !   isOK = wtrc_check_tend_comp("after-microp_driver_tend tphysbc", state, ptend_loc%q, 1._r8)
+      !  end if
+!----------------------
       ! Sum into overall ptend
       call physics_ptend_sum(ptend_loc, ptend, ncol)
 
@@ -2255,7 +2619,6 @@ subroutine micro_mg_cam_tend(state, ptend, dtime, pbuf)
 
       ! Sum all outputs for averaging.
       call post_proc%accumulate()
-
    end do
    call t_stopf('micro_mg_cam_tend_loop')
 
@@ -2371,6 +2734,15 @@ subroutine micro_mg_cam_tend(state, ptend, dtime, pbuf)
    snow_sed = 0._r8
    prec_str = prec_pcw + prec_sed
    snow_str = snow_pcw + snow_sed
+
+  !  if (trace_water) then
+  !    do m = 1, wtrc_nwset
+  !        call pbuf_get_field(pbuf, wtrc_srfpcp_indices(iwtstrain,m), wtprec)
+  !        wtprec = wtrc_prect(:,m) - wtrc_preci(:,m)
+  !        call pbuf_get_field(pbuf, wtrc_srfpcp_indices(iwtstsnow,m), wtprec)
+  !        wtprec = wtrc_preci(:,m)
+  !    enddo
+  !  endif
 
    icecldf(:ncol,top_lev:pver) = ast(:ncol,top_lev:pver)
    liqcldf(:ncol,top_lev:pver) = ast(:ncol,top_lev:pver)
@@ -2595,6 +2967,170 @@ subroutine micro_mg_cam_tend(state, ptend, dtime, pbuf)
 
    end if
 
+   !----------------------------------------
+   !water tracers/isotopes   (on gridlevel)
+   !----------------------------------------
+
+   if(trace_water .and. (micro_mg_version == 2)) then
+     !Output Surface precipitation to physics buffer
+     do m=1, wtrc_nwset
+        !Calculate precipitation averages:
+        ! wtprecr(:ncol,m) = wtprecr(:ncol,m)/num_steps
+        ! wtpreci(:ncol,m) = wtpreci(:ncol,m)/num_steps
+      wtrc_prect(:ncol,m) = wtrc_prect(:ncol,m)/num_steps
+      wtrc_preci(:ncol,m) = wtrc_preci(:ncol,m)/num_steps
+        !Point to water tracer rain
+        call pbuf_get_field(pbuf, wtrc_srfpcp_indices(iwtstrain,m), wtsrfpcp)
+        wtsrfpcp(:ncol) = wtrc_prect(:ncol,m) - wtrc_preci(:ncol,m) !set rain precipitation variable
+
+        !Point to water tracer snow
+        call pbuf_get_field(pbuf, wtrc_srfpcp_indices(iwtstsnow,m), wtsrfpcp)
+        wtsrfpcp(:ncol) = wtrc_preci(:ncol,m) !set snow precipitation variable
+     end do
+   end if
+
+   ! Convert fields to grid level early, that are needed by water tracers
+   if (trace_water .and. (micro_mg_version == 1)) then
+
+      !Average isotope fields to the grid level , so they can be operated on
+     if (use_subcol_microp) then
+       !
+       ! EBK Apr/21/2015
+       ! In order to run on sub-columns all fields would need to 
+       ! be averaged to the grid level like so...
+       !call subcol_field_avg(preo,      ngrdcol, lchnk, preo_grid)
+       ! For the list of fields, see the "else" statement
+       ! Also "state", "ptend" and "pbuf" would all be on
+       ! sub-columns and would need to be averaged to grid level
+       ! and then copied to the sub-column level. Or all the operations
+       ! below would need to be on the sub-column level rather than
+       ! grid level. Some of this would also require changes in water_tracers.F90.
+       !
+       ! (For now just terminate early)
+       call endrun(subname // ':: ERROR water tracers are NOT configured to work with subcolumns')
+     else
+       preo_grid       => preo
+       prdso_grid      => prdso
+       frzro_grid      => frzro
+       meltso_grid     => meltso
+       frzrpst_grid    => frzrpst
+       meltspst_grid   => meltspst
+       wtfc_grid       => wtfc
+       wtfi_grid       => wtfi
+       wtfr_grid       => wtfr
+       wtfs_grid       => wtfs 
+       wtprelat_grid   => wtprelat
+       wtsedlat_grid   => wtsedlat
+       wtpostlat_grid  => wtpostlat
+       wtfri_pre_grid  => wtfri_pre
+       wtfri_post_grid => wtfri_post
+
+        mnuccro_grid    => mnuccro
+        pracso_grid     => pracso
+       qcsedten_grid   => qcsedten
+       qisedten_grid   => qisedten
+       qrsedten_grid   => qrsedten
+       qssedten_grid   => qssedten
+       alst_mic_grid   => alst_mic
+       aist_mic_grid   => aist_mic
+     end if
+
+     !Setup microphysics rates to be applied before sedimentation.
+     call wtrc_init_rates(top_lev, pre_rates_grid)
+
+     !initalize variables
+     pcmei_grid(:,1:) = 0._r8
+     ncmei_grid(:,1:) = 0._r8
+     pmelts_grid(:,1:) = 0._r8
+     nmelts_grid(:,1:) = 0._r8
+
+     !split into positive and negative tendencies - JN
+     do i=1,ncol
+       do k=1,pver
+         if(cmeiout_grid(i,k) .lt. 0._r8) then
+           ncmei_grid(i,k) = cmeiout_grid(i,k) !sublimation (ice-dependent)
+         else
+           pcmei_grid(i,k) = cmeiout_grid(i,k) !deposition (vapor-dependent)
+         end if
+         if(meltso(i,k) .lt. 0._r8) then
+           nmelts_grid(i,k) = meltso_grid(i,k)
+         else
+           pmelts_grid(i,k) = meltso_grid(i,k)
+         end if
+       end do
+     end do
+
+     !Processes that consume water vapor:
+     !+++++++++++++++++++++++++++++++++++
+     call wtrc_add_rates(pre_rates_grid, ncol, top_lev, iwtvap, iwtice, iwtvap, pcmei_grid) !deposition
+     call wtrc_add_rates(pre_rates_grid, ncol, top_lev, iwtvap, iwtice, iwtice, ncmei_grid) !sublimation  
+
+     call wtrc_add_rates(pre_rates_grid, ncol, top_lev, iwtvap,    iwtstrain, iwtstrain, preo_grid)  !rain re-evaporation
+     call wtrc_add_rates(pre_rates_grid, ncol, top_lev, iwtvap,    iwtstsnow, iwtstsnow, prdso_grid) !snow sublimation
+     !+++++++++++++++++++++++++++++++++++
+
+     !Processes that consume liquid:
+     !++++++++++++++++++++++++++++++
+     !Freezing,accretion on ice,and evaporation to deposition:
+     call wtrc_add_rates(pre_rates_grid, ncol, top_lev, iwtliq,    &
+                         iwtice,    iwtliq,                        &
+                         mnuccco_grid + mnuccto_grid + msacwio_grid) 
+     !Accretion on rain,autoconversion: 
+     call wtrc_add_rates(pre_rates_grid, ncol, top_lev, iwtliq,    iwtstrain, iwtliq, prao_grid + prco_grid)
+     !Accretion on snow, Bergeron process on snow:
+     call wtrc_add_rates(pre_rates_grid, ncol, top_lev, iwtliq,    iwtstsnow, iwtliq, psacwso_grid)
+
+     !Bergeron processes to ice and snow (NOTE:  This is handled specifically in apply_rates, so the sources and sinks are not
+     !physical here.  It might be good to figure out a logical switch instead of using specific water type variables. - JN).
+     call wtrc_add_rates(pre_rates_grid, ncol, top_lev, iwtliq, iwtliq, iwtliq, bergo_grid)
+     call wtrc_add_rates(pre_rates_grid, ncol, top_lev, iwtice, iwtice, iwtice, bergso_grid) 
+     !++++++++++++++++++++++++++++++
+
+     !Processes that consume ice:
+     !Ice accretion on snow,autoncversion of snow:
+     call wtrc_add_rates(pre_rates_grid, ncol, top_lev, iwtice, iwtstsnow, iwtice, praio_grid + prcio_grid)
+
+     !Processes that consume rain:
+     !Accretion on snow, freezing (hetero and homo?):
+     !Don't include freezing of rain (frzro_grid) as handled separately
+     call wtrc_add_rates(pre_rates_grid, ncol, top_lev, iwtstrain, &
+                         iwtstsnow, iwtstrain,                     &
+                         pracso_grid + mnuccro_grid)
+
+     !Setup microphysics rates to be applied after sedimentation:
+     call wtrc_init_rates(top_lev, post_rates_grid)
+
+     !Processes that consume water vapor:
+     !Condenstation (sets supersat = 0):
+     call wtrc_add_rates(post_rates_grid, ncol, top_lev, iwtvap,    iwtliq,   iwtvap, qcreso_grid)
+     !Deposition (sets supersat = 0): 
+     call wtrc_add_rates(post_rates_grid, ncol, top_lev, iwtvap,    iwtice,   iwtvap, qireso_grid) !positive
+
+     !Processes that consume liquid:
+     !
+     !NOTE: The evaporation is of liquid that sedimented from a higher
+     !level. The source of the vapor has already been include in the
+     !sedimentation tendency. (NOTE:  managed in wtrc_sediment -JN)
+     !Freezing:
+     call wtrc_add_rates(post_rates_grid, ncol, top_lev, iwtliq,    iwtice,   iwtliq, homoo_grid) !positive
+
+     !Processes that consume ice:
+     !
+     !NOTE: The evaporation is of ice that sedimented from a higher
+     !level. The source of the vapor has already been include in the
+     !sedimentation tendency. (NOTE:  managed in wtrc_sediment - JN)
+     !Melting:
+     call wtrc_add_rates(post_rates_grid, ncol, top_lev, iwtice,    iwtliq,   iwtice, melto_grid) !positive
+
+
+     call wtrc_apply_rates_mg1(state, ptend, pbuf,top_lev, dtime/num_steps, .true., pre_rates=pre_rates_grid,              &
+                               sed_rates=sed_rates_grid, post_rates=post_rates_grid, do_stprecip=.true., liqcldf=alst_mic,       &
+                               icecldf=aist_mic, fc=wtfc_grid, fi=wtfi_grid, prelat=wtprelat_grid, postlat=wtpostlat_grid,       &
+                               frzro=frzro_grid, meltso=meltso_grid)
+
+   end if !water tracers
+
+   !-------------------------------------
    ! ------------------------------------- !
    ! Size distribution calculation         !
    ! ------------------------------------- !

@@ -1,4 +1,3 @@
-
 module macrop_driver
 
   !-------------------------------------------------------------------------------------------------------
@@ -85,7 +84,8 @@ module macrop_driver
     fice_idx,     &  
     cmeliq_idx,   &  
     shfrc_idx,    &
-    naai_idx 
+    naai_idx ,    &
+    wtdlf_idx
 
   logical :: liqcf_fix
 
@@ -203,7 +203,8 @@ end subroutine macrop_driver_readnl
                                                  ! temperature, water vapor, cloud ice and cloud
                                                  ! liquid budgets.
     integer              :: history_budget_histfile_num ! output history file number for budget fields
-    integer :: istat
+    integer :: istat, ierr
+
     character(len=*), parameter :: subname = 'macrop_driver_init'
     !-----------------------------------------------------------------------
 
@@ -320,6 +321,7 @@ end subroutine macrop_driver_readnl
     CC_nl_idx   = pbuf_get_index('CC_nl')
     CC_ni_idx   = pbuf_get_index('CC_ni')
     CC_qlst_idx = pbuf_get_index('CC_qlst')
+    wtdlf_idx   = pbuf_get_index('WTDLF')
 
     if (micro_do_icesupersat) then 
        naai_idx      = pbuf_get_index('NAAI')
@@ -377,6 +379,10 @@ end subroutine macrop_driver_readnl
   use cldwat2m_macro,   only: mmacro_pcond
   use physconst,        only: cpair, tmelt, gravit
   use time_manager,     only: get_nstep, is_first_step 
+  use water_tracer_vars,only: trace_water, wtrc_detrain_in_macrop, wtrc_nwset,&
+                              wtrc_iatype, iwspec, wtrc_indices, wtrc_ncnst
+  use water_tracers,    only: wtrc_init_rates, wtrc_add_rates, wtrc_apply_rates_mg1
+  use water_types,      only: pwtype, iwtvap, iwtliq, iwtice
 
   use ref_pres,         only: top_lev => trop_cloud_top_lev
 
@@ -451,6 +457,9 @@ end subroutine macrop_driver_readnl
   real(r8), pointer, dimension(:,:) :: rqcr_i
   real(r8), pointer, dimension(:,:) :: rncr_l
   real(r8), pointer, dimension(:,:) :: rncr_i
+
+  ! water tracers:
+  real(r8), pointer, dimension(:,:,:) :: wtdlf !detrained water tracers from convection [kg/kg/s]
 
   ! Convective cloud to the physics buffer for purposes of ql contrib. to radn.
 
@@ -569,6 +578,17 @@ end subroutine macrop_driver_readnl
   ! CloudSat equivalent ice mass mixing ratio (kg/kg)
   real(r8) :: cldsice(pcols,pver)
 
+  ! Local variables for water tracers/isotopes
+  real(r8)              :: process_rates(pcols,pver,pwtype,pwtype,pwtype) ! Process rates (kg/kg/sec)
+  integer               :: m                                              ! water set index
+  logical               :: isOk
+  integer               :: iwtype
+
+  real(r8) pqctn(pcols,pver)
+  real(r8) nqctn(pcols,pver)
+  real(r8) pqitn(pcols,pver)
+  real(r8) nqitn(pcols,pver)
+
   ! ======================================================================
 
   if (micro_do_icesupersat) then 
@@ -636,6 +656,15 @@ end subroutine macrop_driver_readnl
    lq(ixcldice) = .TRUE.
    lq(ixnumliq) = .TRUE.
    lq(ixnumice) = .TRUE.
+
+   !allow water tracers to change:
+   if ((trace_water) .and. (wtrc_detrain_in_macrop)) then
+     do m=1,wtrc_nwset
+       lq(wtrc_iatype(m,iwtliq)) = .TRUE.
+       lq(wtrc_iatype(m,iwtice)) = .TRUE.
+     end do  
+   end if
+
    call physics_ptend_init(ptend_loc, state%psetcols, 'pcwdetrain_mac', ls=.true., lq=lq)   ! Initialize local physics_ptend object
 
      ! Procedures :
@@ -711,6 +740,16 @@ end subroutine macrop_driver_readnl
 
     ! Targetted detrainment of convective liquid water either directly into the
     ! existing liquid stratus or into the environment. 
+
+      !water tracers:
+      !NOTE:  This assumes no fractionation during freezing/melting. - JN
+      if ((trace_water) .and. (wtrc_detrain_in_macrop)) then
+        call pbuf_get_field(pbuf, wtdlf_idx, wtdlf)
+        do m=1,wtrc_nwset
+          ptend_loc%q(i,k,wtrc_iatype(m,iwtliq)) = wtdlf(i,k,m) * (1._r8 - dum1)
+          ptend_loc%q(i,k,wtrc_iatype(m,iwtice)) = wtdlf(i,k,m) * dum1
+        end do
+      end if
       if( cu_det_st ) then
           dlf_T(i,k)  = ptend_loc%s(i,k)/cpair
           dlf_qv(i,k) = 0._r8
@@ -890,6 +929,11 @@ end subroutine macrop_driver_readnl
    lq(ixnumliq) = .true.
    lq(ixnumice) = .true.
 
+   !Water tracers:
+   do m=1,wtrc_ncnst
+     lq(wtrc_indices(m)) = .true.
+   end do
+
    ! Initialize local physics_ptend object again
    call physics_ptend_init(ptend_loc, state%psetcols, 'macro_park', &
         ls=.true., lq=lq )  
@@ -1024,6 +1068,67 @@ end subroutine macrop_driver_readnl
          end if
       end do
    end do
+
+   !-------------------------------------------------
+   !water tracers
+   !-------------------------------------------------
+   
+      ! If doing water isotopes, then apply these processes to the isotopic water
+      ! species.
+      !
+      ! NOTE: The detrained ice and water vapor should be handled in the convection
+      ! routines, but for now a generic tendency may be applied here based upon the.
+      !
+      ! Assume that the liquid and ice tendencies are from vapor<->liquid and
+      ! vapor<->ice processes, not ice<->liquid. If this is wrong, then individual
+      ! rates will need to be determined in mmacro_pcond.
+      
+      if (trace_water) then
+   
+        ! Setup the process rate matrix using the pre-sedimentation state and
+        ! the calculated process rates.
+        !
+        ! NOTE: The reverse of the process is filled in automatically.
+        call wtrc_init_rates(top_lev, process_rates)
+   
+        ! Processes that consume water vapor:
+   
+        !initalize variables - JN
+        pqctn(:,1:) = 0._r8
+        nqctn(:,1:) = 0._r8
+        pqitn(:,1:) = 0._r8
+        nqitn(:,1:) = 0._r8
+   
+        !split into positive and negative tendencies - JN
+        do i=1,ncol
+          do k=1,pver
+            if(qcten(i,k) .lt. 0._r8) then
+              nqctn(i,k) = qcten(i,k) 
+            else
+              pqctn(i,k) = qcten(i,k)
+            end if
+            if(qiten(i,k) .lt. 0._r8) then
+              nqitn(i,k) = qiten(i,k)
+            else
+              pqitn(i,k) = qiten(i,k)
+            end if  
+          end do
+        end do
+   
+        call wtrc_add_rates(process_rates, ncol, top_lev, iwtvap, iwtvap, iwtvap, qvlat + qcten + qiten)
+   
+        call wtrc_add_rates(process_rates, ncol, top_lev, iwtvap, iwtliq, iwtvap, pqctn)
+        call wtrc_add_rates(process_rates, ncol, top_lev, iwtvap, iwtliq, iwtliq, nqctn)
+        call wtrc_add_rates(process_rates, ncol, top_lev, iwtvap, iwtice, iwtvap, pqitn)
+        call wtrc_add_rates(process_rates, ncol, top_lev, iwtvap, iwtice, iwtice, nqitn)
+   
+        !Apply these rates:
+        call wtrc_apply_rates_mg1(state_loc, ptend_loc, pbuf, top_lev, dtime, .false., pre_rates=process_rates, &
+                                  prelat=tlat)
+   
+      end if !water tracers
+   
+   !-----------------------------------------------------
 
    ! update the output tendencies with the mmacro_pcond tendencies
    call physics_ptend_sum(ptend_loc, ptend, ncol)

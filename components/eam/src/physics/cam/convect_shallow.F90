@@ -421,6 +421,12 @@ end subroutine convect_shallow_init_cnst
    use physconst,       only : latice, latvap, rhoh2o
 
    use spmd_utils, only : iam
+! WT-block begins 
+   use water_tracer_vars, only: trace_water
+   use water_tracers,     only: wtrc_shallow
+! WT-block ends
+
+
    implicit none
 
    ! ---------------------- !
@@ -501,6 +507,15 @@ end subroutine convect_shallow_init_cnst
 
    type(physics_state) :: state1                                         ! Locally modify for evaporation to use, not returned
    type(physics_ptend) :: ptend_loc                                      ! Local tendency from processes, added up to return as ptend_all
+
+! WT-block begins 
+     !water tracer variables:
+   real(r8) :: wtprect(pcols,pcnst)          !Water tracer surface precipitation
+   real(r8) :: wtsnowt(pcols,pcnst)          !Water tracer surface snow
+   real(r8) :: evpstore(pcols,pver)          !Precipitation Evaporation
+   real(r8) :: substore(pcols,pver)          !Snow Sublimation
+   real(r8) :: wtqc(pcols,pver,pcnst)        !tendency of detrained cloud condensate
+! WT-block ends
 
    integer itim_old, ifld
    real(r8), pointer, dimension(:,:) :: cld
@@ -601,6 +616,13 @@ end subroutine convect_shallow_init_cnst
       evapcsh     = 0._r8
       snow        = 0._r8
 
+! WT-block begins 
+      !water tracers:
+      wtqc(:,:,:) = 0._r8
+      wtprect(:,:)= 0._r8 
+      wtsnowt(:,:)= 0._r8
+! WT-block ends
+
       call pbuf_get_field(pbuf, sh_flxprc_idx, flxprec)
       call pbuf_get_field(pbuf, sh_flxsnw_idx, flxsnow)
 
@@ -653,7 +675,11 @@ end subroutine convect_shallow_init_cnst
                                evapcsh             , shfrc          , iccmr_UW      , icwmr_UW      ,                   &
                                icimr_UW            , cbmf           , qc2           , rliq2         ,                   &
                                cnt2                , cnb2           , lchnk         , state%pdeldry ,                   &
-                               fer_out             , fdr_out                                                            )
+                               fer_out             , fdr_out , &
+! WT-block begins 
+                               wtprect        , wtsnowt       , wtqc                              )
+! WT-block ends                               
+
 
       if(convproc_do_aer .or. convproc_do_gas) then
          !RCE mods for modal_aero_convproc
@@ -844,6 +870,13 @@ end subroutine convect_shallow_init_cnst
 
    call physics_update( state1, ptend_loc, ztodt )
 
+! WT-block begins 
+   ! ----------------------------------------------------------------------------- !
+   ! Update water tracers, if applicable
+   ! ----------------------------------------------------------------------------- !
+   if (trace_water) call wtrc_shallow(state1, ztodt, wtprect, wtsnowt, wtqc, pbuf)
+! WT-block ends
+
    ! ----------------------------------------------------------------------------- !
    ! For diagnostic purpose, print out 'QT,SL,SLV,t,RH' just after cumulus scheme  !
    ! ----------------------------------------------------------------------------- !
@@ -912,8 +945,8 @@ end subroutine convect_shallow_init_cnst
                        state1%t, state1%pmid, state1%pdel, state1%q(:pcols,:pver,1), &
                        ptend_loc%s, tend_s_snwprd, tend_s_snwevmlt,                  & 
                        ptend_loc%q(:pcols,:pver,1),                                  &
-                       rprdsh, cld, ztodt,                                           &
-                       precc, snow, ntprprd, ntsnprd , flxprec, flxsnow )
+                       rprdsh, cld, ztodt, precc, snow,                         &
+                       evpstore, substore, ntprprd, ntsnprd, flxprec, flxsnow )
 
    ! ------------------------------------------ !
    ! record history variables from zm_conv_evap !
@@ -935,9 +968,6 @@ end subroutine convect_shallow_init_cnst
    call outfld( 'HKNTSNPD'       , ntsnprd                        , pcols, lchnk )
    call outfld( 'HKEIHEAT'       , ptend_loc%s                    , pcols, lchnk )
 
-   ! ---------------------------------------------------------------- !      
-   ! Add tendency from this process to tend from other processes here !
-   ! ---------------------------------------------------------------- !
 
    call physics_ptend_sum( ptend_loc, ptend_all, ncol )
    call physics_ptend_dealloc(ptend_loc)

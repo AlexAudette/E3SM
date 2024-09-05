@@ -33,7 +33,7 @@ module convect_deep
    
 ! Private module data
    character(len=16) :: deep_scheme    ! default set in phys_control.F90, use namelist to change
-! Physics buffer indices 
+! Physics buffer indices  
    integer     ::  icwmrdp_idx      = 0 
    integer     ::  rprddp_idx       = 0 
    integer     ::  nevapr_dpcu_idx  = 0 

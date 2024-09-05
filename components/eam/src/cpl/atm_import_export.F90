@@ -1,16 +1,21 @@
 module atm_import_export
 
   use shr_kind_mod  , only: r8 => shr_kind_r8, cl=>shr_kind_cl
+!   use camsrfexch,     only: cam_in_t, cam_out_t
+  use cam_logfile,       only : iulog ! <-- for debugging
+  
+
   implicit none
+!   type(cam_out_t), pointer :: cam_out(:) ! WT line
 
 contains
 
-  subroutine atm_import( x2a, cam_in, restart_init )
+  subroutine atm_import( x2a, cam_in, cam_out, restart_init )
 
     !-----------------------------------------------------------------------
     use cam_cpl_indices
-    use camsrfexch,     only: cam_in_t
-    use phys_grid ,     only: get_ncols_p
+    use camsrfexch,     only: cam_in_t, cam_out_t
+    use phys_grid ,     only: get_ncols_p, get_rlat_p, get_rlon_p
     use ppgrid    ,     only: begchunk, endchunk       
     use shr_const_mod,  only: shr_const_stebol
     use seq_drydep_mod, only: n_drydep
@@ -19,16 +24,26 @@ contains
     use co2_cycle     , only: data_flux_ocn, data_flux_fuel
     use physconst     , only: mwco2
     use time_manager  , only: is_first_step
+
+
+   !Water isotopes:
+
+   use water_tracer_vars, only: wtrc_nsrfvap, wtrc_iasrfvap, wtrc_indices, wtrc_species
+   use water_tracers    , only: wtrc_ratio
+
+
+
     !
     ! Arguments
     !
     real(r8)      , intent(in)    :: x2a(:,:)
     type(cam_in_t), intent(inout) :: cam_in(begchunk:endchunk)
+   type(cam_out_t), intent(in) :: cam_out(begchunk:endchunk)
     logical, optional, intent(in) :: restart_init
     !
     ! Local variables
     !		
-    integer            :: i,lat,n,c,ig  ! indices
+    integer            :: i,lat,n,c,ig,j  ! indices
     integer            :: ncols         ! number of columns
     logical, save      :: first_time = .true.
     integer, parameter :: ndst = 2
@@ -36,6 +51,13 @@ contains
     integer, pointer   :: dst_a5_ndx, dst_a7_ndx
     integer, pointer   :: dst_a1_ndx, dst_a3_ndx
     logical :: overwrite_flds
+    !water tracers:
+    real(r8) :: R  !water tracer ratio
+
+    real(r8)           :: wtlat
+    real(r8)           :: wtlon
+    real(r8), parameter:: radtodeg = 180.0_r8/SHR_CONST_PI
+
     !-----------------------------------------------------------------------
     overwrite_flds = .true.
     ! don't overwrite fields if invoked during the initialization phase 
@@ -67,6 +89,470 @@ contains
              cam_in(c)%cflx(i,1) = -x2a(index_x2a_Faxx_evap,ig)                
              cam_in(c)%lhf(i)    = -x2a(index_x2a_Faxx_lat, ig)     
           endif
+         ! WT-block begins 
+         !Need to define lat/lon for water tracers:
+         wtlat = get_rlat_p(c,i)*radtodeg
+         wtlon = get_rlon_p(c,i)*radtodeg
+         ! WT-bock ends
+         !Need to set this before doing water tracers:
+         ! cam_in(c)%landfrac(i)  =  x2a(index_x2a_Sf_lfrac, ig) ! land fraction
+         ! write(iulog,*) 'qbot shape', SHAPE(cam_out(c)%qbot(:,:))
+         ! write(iulog,*) ''
+
+         do j = 1, wtrc_nsrfvap
+         if(j .eq. 1) then !Normal water vapour (total)
+            cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = - x2a(index_x2a_Faxx_evap, ig)
+         else !water tag
+            if( -x2a(index_x2a_Faxx_evap,ig) .lt. 0._r8) then !dew/frost?
+               ! calculate surface vapour ratio
+               R = wtrc_ratio(j,cam_out(c)%qbot(i,wtrc_indices(wtrc_iasrfvap(j))),&
+              cam_out(c)%qbot(i,wtrc_indices(wtrc_iasrfvap(1))))
+               cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = R*-x2a(index_x2a_Faxx_evap,ig)
+            else !Sources of water vapour tags
+
+              if(j .eq. 2) then
+                  cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)*0.5_r8
+
+              else if(j .eq. 3) then
+                  !Latitude band from 90S to 80S, LAT85S
+                  if((wtlat >= -90._r8) .and. (wtlat <= -80._r8)) then
+                    cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig) 
+                  else
+                    cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 4) then
+                !Latitude band from 80S to 70S, LAT75S
+                 if((wtlat > -80._r8) .and. (wtlat <= -70._r8)) then
+                    cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                 else
+                    cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                 end if
+
+               else if(j .eq. 5) then
+                  !Latitude band from 70S to 60S, LAT65S
+                  if((wtlat > -70._r8) .and. (wtlat <= -60._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 6) then
+                  !Latitude band from 60S to 50S, LAT55S
+                  if((wtlat > -60._r8) .and. (wtlat <= -50._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 7) then
+                  !Latitude band from 50S to 40S, LAT45S
+                  if((wtlat > -50._r8) .and. (wtlat <= -40._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 8) then
+                  !Latitude band from 40S to 30S, LAT35S
+                  if((wtlat > -40._r8) .and. (wtlat <= -30._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 9) then
+                  !Latitude band from 30S to 20S, LAT25S
+                  if((wtlat > -30._r8) .and. (wtlat <= -20._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 10) then
+                  !Latitude band from 20S to 10S, LAT15S
+                  if((wtlat > -20._r8) .and. (wtlat <= -10._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 11) then
+                  !Latitude band from 10S to Eq, LAT05S
+                  if((wtlat > -10._r8) .and. (wtlat <= 0._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 12) then
+                  !Latitude band from Eq to 10N, LAT05N
+                  if((wtlat > 0._r8) .and. (wtlat <= 10._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 13) then
+                  !Latitude band from 10N to 20N, LAT15N
+                  if((wtlat > 10._r8) .and. (wtlat <= 20._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 14) then
+                  !Latitude band from 20N to 30N, LAT25N
+                  if((wtlat > 20._r8) .and. (wtlat <= 30._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+               
+               else if(j .eq. 15) then
+                  !Latitude band from 30N to 40N, LAT35N
+                  if((wtlat > 30._r8) .and. (wtlat <= 40._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 16) then
+                  !Latitude band from 40N to 50N, LAT45N
+                  if((wtlat > 40._r8) .and. (wtlat <= 50._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 17) then
+                  !Latitude band from 50N to 60N, LAT55N
+                  if((wtlat > 50._r8) .and. (wtlat <= 60._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 18) then
+                  !Latitude band from 60N to 70N, LAT65N
+                  if((wtlat > 60._r8) .and. (wtlat <= 70._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 19) then
+                  !Latitude band from 70N to 80N, LAT75N
+                  if((wtlat > 70._r8) .and. (wtlat <= 80._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 20) then
+                  !Latitude band from 80N to 90N, LAT85N
+                  if((wtlat > 80._r8) .and. (wtlat <= 90._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 21) then
+                  !Longitude band from 0E to 10E, LON05E
+                  if((wtlon >= 0._r8) .and. (wtlon <= 10._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 22) then
+                  !Longitude band from 10E to 20E, LON15E
+                  if((wtlon > 10._r8) .and. (wtlon <= 20._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 23) then
+                  !Longitude band from 20E to 30E, LON25E
+                  if((wtlon > 20._r8) .and. (wtlon <= 30._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+               
+               else if(j .eq. 24) then
+                  !Longitude band from 30E to 40E, LON35E
+                  if((wtlon > 30._r8) .and. (wtlon <= 40._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 25) then
+                  !Longitude band from 40E to 50E, LON45E
+                  if((wtlon > 40._r8) .and. (wtlon <= 50._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 26) then
+                  !Longitude band from 50E to 60E, LON55E
+                  if((wtlon > 50._r8) .and. (wtlon <= 60._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 27) then
+                  !Longitude band from 60E to 70E, LON65E
+                  if((wtlon > 60._r8) .and. (wtlon <= 70._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 28) then
+                  !Longitude band from 70E to 80E, LON75E
+                  if((wtlon > 70._r8) .and. (wtlon <= 80._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 29) then
+                  !Longitude band from 80E to 90E, LON85E
+                  if((wtlon > 80._r8) .and. (wtlon <= 90._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 30) then
+                  !Longitude band from 90E to 100E, LON95E
+                  if((wtlon > 90._r8) .and. (wtlon <= 100._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 31) then
+                  !Longitude band from 100E to 110E, LON105E
+                  if((wtlon > 100._r8) .and. (wtlon <= 110._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 32) then
+                  !Longitude band from 110E to 120E, LON115E
+                  if((wtlon > 110._r8) .and. (wtlon <= 120._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 33) then
+                  !Longitude band from 120E to 130E, LON125E
+                  if((wtlon > 120._r8) .and. (wtlon <= 130._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+               
+               else if(j .eq. 34) then
+                  !Longitude band from 130E to 140E, LON135E
+                  if((wtlon > 130._r8) .and. (wtlon <= 140._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 35) then
+                  !Longitude band from 140E to 150E, LON145E
+                  if((wtlon > 140._r8) .and. (wtlon <= 150._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 36) then
+                  !Longitude band from 150E to 160E, LON155E
+                  if((wtlon > 150._r8) .and. (wtlon <= 160._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 37) then
+                  !Longitude band from 160E to 170E, LON165E
+                  if((wtlon > 160._r8) .and. (wtlon <= 170._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 38) then
+                  !Longitude band from 170E to 180E, LON175E
+                  if((wtlon > 170._r8) .and. (wtlon <= 180._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 39) then
+                  !Longitude band from 180E to 190E, LON185E
+                  if((wtlon > 180._r8) .and. (wtlon <= 190._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 40) then
+                  !Longitude band from 190E to 200E, LON195E
+                  if((wtlon > 190._r8) .and. (wtlon <= 200._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+               else if(j .eq. 41) then
+                  !Longitude band from 200E to 210E, LON205E
+                  if((wtlon > 200._r8) .and. (wtlon <= 210._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 42) then
+                  !Longitude band from 210E to 220E, LON215E
+                  if((wtlon > 210._r8) .and. (wtlon <= 220._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 43) then
+                  !Longitude band from 220E to 230E, LON225E
+                  if((wtlon > 220._r8) .and. (wtlon <= 230._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+               
+               else if(j .eq. 44) then
+                  !Longitude band from 230E to 240E, LON235E
+                  if((wtlon > 230._r8) .and. (wtlon <= 240._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 45) then
+                  !Longitude band from 240E to 250E, LON245E
+                  if((wtlon > 240._r8) .and. (wtlon <= 250._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 46) then
+                  !Longitude band from 250E to 260E, LON255E
+                  if((wtlon > 250._r8) .and. (wtlon <= 260._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 47) then
+                  !Longitude band from 260E to 270E, LON265E
+                  if((wtlon > 260._r8) .and. (wtlon <= 270._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 48) then
+                  !Longitude band from 270E to 280E, LON275E
+                  if((wtlon > 270._r8) .and. (wtlon <= 280._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 49) then
+                  !Longitude band from 280E to 290E, LON285E
+                  if((wtlon > 280._r8) .and. (wtlon <= 290._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 50) then
+                  !Longitude band from 290E to 300E, LON295E
+                  if((wtlon > 290._r8) .and. (wtlon <= 300._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 51) then
+                  !Longitude band from 300E to 310E, LON305E
+                  if((wtlon > 300._r8) .and. (wtlon <= 310._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 52) then
+                  !Longitude band from 310E to 320E, LON315E
+                  if((wtlon > 310._r8) .and. (wtlon <= 320._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 53) then
+                  !Longitude band from 320E to 330E, LON325E
+                  if((wtlon > 320._r8) .and. (wtlon <= 330._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+               
+               else if(j .eq. 54) then
+                  !Longitude band from 330E to 340E, LON335E
+                  if((wtlon > 330._r8) .and. (wtlon <= 340._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 55) then
+                  !Longitude band from 340E to 350E, LON345E
+                  if((wtlon > 340._r8) .and. (wtlon <= 350._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               else if(j .eq. 56) then
+                  !Longitude band from 350E to 360E, LON355E
+                  if((wtlon > 350._r8) .and. (wtlon <= 360._r8)) then
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = -x2a(index_x2a_Faxx_evap,ig)
+                  else
+                     cam_in(c)%cflx(i,wtrc_indices(wtrc_iasrfvap(j))) = 0._r8
+                  end if
+
+               end if ! water tracer index j
+            end if ! dew/frost or evap
+         end if ! Normal water vapour H20
+      end do
+
+
+
+
+         
 
           if (index_x2a_Faoo_h2otemp /= 0) then
              cam_in(c)%h2otemp(i) = -x2a(index_x2a_Faoo_h2otemp,ig)

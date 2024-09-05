@@ -36,6 +36,10 @@ module clubb_intr
 #else
   use shr_kind_mod,     only: core_rknd=>shr_kind_r8
 #endif
+  use water_tracer_vars,only: trace_water, wtrc_nwset, wtrc_iatype, wtrc_detrain_in_macrop, &
+                              iwspec
+  use water_tracers,    only: wtrc_ratio, wtrc_check_tend_comp, wtrc_check_h2o_comp
+  use water_types,      only: iwtvap, iwtliq, iwtice
 
   implicit none
 
@@ -187,7 +191,12 @@ module clubb_intr
     naai_idx, &         ! ice number concentration
     prer_evap_idx, &    ! rain evaporation rate
     qrl_idx, &          ! longwave cooling rate
-    radf_idx
+    radf_idx, &
+    wtrc_rtp2_idx, &    ! water tracer variance
+    wtrc_wprtp_idx, &   ! turbulent flux of water tracer
+    wtrc_rtpthlp_idx, & ! covariance of thetal and water tracer
+    wtrc_rtpthvp_idx, & ! covatiance of thetav and water tracer
+    wtdlf_idx           ! detrained liquid water of water tracer
 
  integer :: &          ! newly added pbuf fields for CLUBB
     wpthvp_idx, &       ! < w'th_v' >
@@ -756,6 +765,14 @@ end subroutine clubb_init_cnst
     snow_dp_idx = pbuf_get_index('SNOW_DP') !PMA ZM snow for gustiness
     vmag_gust_idx = pbuf_get_index('vmag_gust') !PMA ZM snow for gustiness
 
+    ! Water tracers code block begins 
+    wtdlf_idx   = pbuf_get_index('WTDLF')
+    wtrc_wprtp_idx = pbuf_get_index('wtrc_WPRTP_nadv')
+    wtrc_rtp2_idx  = pbuf_get_index('wtrc_RTP2_nadv')
+    wtrc_rtpthlp_idx = pbuf_get_index('wtrc_RTTH_nadv')
+    wtrc_rtpthvp_idx = pbuf_get_index('wtrc_RTTV_nadv')
+    ! Water tracers code block ends
+
     iisclr_rt  = -1
     iisclr_thl = -1
     iisclr_CO2 = -1
@@ -771,6 +788,11 @@ end subroutine clubb_init_cnst
     if (do_expldiff) then
        offset = 2 ! diffuse temperature and moisture explicitly
        edsclr_dim = edsclr_dim + offset
+       ! Water tracers code block begins 
+       ! Add water tags
+       offset = wtrc_nwset
+       edsclr_dim = edsclr_dim + offset
+       ! Water tracers code block ends
     endif
 
     ! ----------------------------------------------------------------- !
@@ -1044,6 +1066,14 @@ end subroutine clubb_init_cnst
           call pbuf_set_field(pbuf2d, wsresp_idx,    0.0_r8)
           call pbuf_set_field(pbuf2d, tau_est_idx,   0.0_r8)
        end if
+       ! Water tracers code block begins 
+       if (trace_water) then
+            call pbuf_set_field(pbuf2d, wtrc_wprtp_idx, 0.0_r8)
+            call pbuf_set_field(pbuf2d, wtrc_rtp2_idx,    real(rt_tol**2, kind = r8))
+            call pbuf_set_field(pbuf2d, wtrc_rtpthlp_idx, 0.0_r8)
+            call pbuf_set_field(pbuf2d, wtrc_rtpthvp_idx, 0.0_r8)
+       endif
+       ! Water tracers code block ends
     endif
 
     ! --------------- !
@@ -1282,6 +1312,22 @@ end subroutine clubb_init_cnst
    real(core_rknd) :: qrl_zm(pverp)
    real(core_rknd) :: thlp2_rad_out(pverp)
 
+   ! Water tracers code block begins 
+   real(core_rknd) :: wtrc_rtm_in(pverp, wtrc_nwset)
+   real(core_rknd) :: wtrc_wprtp_in(pverp, wtrc_nwset)                  ! turbulent flux of total water                [kg/kg m/s]
+   real(core_rknd) :: wtrc_rtpthlp_in(pverp, wtrc_nwset)                ! covariance of thetal and qt                  [kg/kg K]
+   real(core_rknd) :: wtrc_rtp2_in(pverp, wtrc_nwset)                   ! total water variance                         [kg^2/k^2]
+   real(core_rknd) :: wtrc_rtp3_in(pverp, wtrc_nwset)                   ! thermodynamic levels (r_t'^3 )               [(kg/kg)^3]
+   real(core_rknd) :: wtrc_wprtp_forcing(pverp, wtrc_nwset)
+   real(core_rknd) :: wtrc_rtp2_forcing(pverp, wtrc_nwset)
+   real(core_rknd) :: wtrc_rtpthlp_forcing(pverp, wtrc_nwset)
+   real(core_rknd) :: wtrc_rtm_forcing(pverp, wtrc_nwset)
+   real(core_rknd) :: wtrc_wprtp_sfc(wtrc_nwset)
+   real(core_rknd) :: wtrc_sclrprtp(pverp, sclr_dim, wtrc_nwset)
+   real(core_rknd) :: wtrc_rcm_inout(pverp, wtrc_nwset)
+   real(core_rknd) :: wtrc_rtpthvp_inout(pverp, wtrc_nwset)
+   ! Water tracers code block ends
+
    real(core_rknd), dimension(nparams)  :: clubb_params ! These adjustable CLUBB parameters (C1, C2 ...)
    real(core_rknd), dimension(sclr_dim) :: sclr_tol     ! Tolerance on passive scalar       [units vary]
 
@@ -1441,6 +1487,25 @@ end subroutine clubb_init_cnst
    real(r8), pointer, dimension(:,:) :: cmeliq
    real(r8), pointer, dimension(:,:) :: cmfmc_sh ! Shallow convective mass flux--m subc (pcols,pverp) [kg/m2/s/]
 
+   ! Water tracers code block begins 
+   real(r8), pointer, dimension(:,:,:) :: wtdlf         !detrained water tracers from convection [kg/kg/s]
+   real(r8), pointer, dimension(:,:,:) :: wtrc_wprtp    !turbulent water tracer moisture flux [(kg/kg)(m/s)]
+   real(r8), pointer, dimension(:,:,:) :: wtrc_rtp2     !water tracer moisture variance [(kg/kg)^2]
+   real(r8), pointer, dimension(:,:,:) :: wtrc_rtpthlp  !water tracer moisture/theta_l covariance [ (kg/kg) K]
+   real(r8), pointer, dimension(:,:,:) :: wtrc_rtpthvp  !water tracer moisture/theta_l covariance [ (kg/kg) K]
+   real(r8) :: wtrc_rcm(pcols,pverp,wtrc_nwset)         !CLUBB water tracer cloud water mixing ratio [kg/kg]
+   real(r8) :: wtrc_rtm(pcols,pverp,wtrc_nwset)         !water tracer "total water" (assumes all vapor) [kg/kg]
+   real(r8) :: R                                        !water tracer/isotope ratio [unitless]
+   real(r8) :: wtrc_vtmp                                !temporary water tracer variable (for ratio calculations)
+   real(r8) :: wtrc_vdiff                               !temporary water tracer variable (for mass flux  adjusting)
+   integer  :: m                                        !water tracer loop control variable
+
+    !dummy precipitation output from rates
+    !Precipitation output (needed due to microphysics iterations):
+    real(r8)  precr(pcols,wtrc_nwset) 
+    real(r8)  preci(pcols,wtrc_nwset)
+   ! Water tracers code block ends
+
    type(pdf_parameter), pointer :: pdf_params    ! PDF parameters (thermo. levs.) [units vary]
    type(pdf_parameter), pointer :: pdf_params_zm ! PDF parameters on momentum levs. [units vary]
 
@@ -1556,6 +1621,16 @@ end subroutine clubb_init_cnst
    !  to zero.
    fcor = 0._core_rknd
 
+
+   if (trace_water) then
+    wtrc_rtp3_in(1:pverp,:) = 0._core_rknd
+    wtrc_rtp2_forcing(1:pverp,:) = 0._core_rknd
+    wtrc_rtpthlp_forcing(1:pverp,:) = 0._core_rknd
+    wtrc_wprtp_forcing(1:pverp,:) = 0._core_rknd
+    wtrc_rtm_forcing(1:pverp,:) = 0._core_rknd
+   endif
+   ! Water tracers code block ends
+
  !  Get indicees for cloud and ice mass and cloud and ice number
 
    call cnst_get_ind('Q',ixq)
@@ -1670,6 +1745,20 @@ end subroutine clubb_init_cnst
       call pbuf_get_field(pbuf, wsresp_idx, wsresp)
       call pbuf_get_field(pbuf, tau_est_idx, tau_est)
    end if
+
+   ! Water tracers code block begins 
+   if (trace_water) then
+    call pbuf_get_field(pbuf, wtrc_rtp2_idx,     wtrc_rtp2,     start=(/1,1,1,itim_old/), kount=(/pcols,pverp,wtrc_nwset,1/))
+    call pbuf_get_field(pbuf, wtrc_rtpthlp_idx,  wtrc_rtpthlp,  start=(/1,1,1,itim_old/), kount=(/pcols,pverp,wtrc_nwset,1/))
+    call pbuf_get_field(pbuf, wtrc_rtpthvp_idx,  wtrc_rtpthvp,  start=(/1,1,1,itim_old/), kount=(/pcols,pverp,wtrc_nwset,1/))
+    call pbuf_get_field(pbuf, wtrc_wprtp_idx,    wtrc_wprtp,    start=(/1,1,1,itim_old/), kount=(/pcols,pverp,wtrc_nwset,1/))
+   endif
+
+
+   ! Initialize the water tracer of the total water to the prognostic water.
+   wtrc_rtm(:,:,1) = rtm
+   wtrc_rcm(:,:,1) = rcm
+   ! Water tracers code block ends
 
    ! Intialize the apply_const variable (note special logic is due to eularian backstepping)
    if (clubb_do_adv .and. (is_first_step() .or. all(wpthlp(1:ncol,1:pver) .eq. 0._r8))) then
@@ -1797,6 +1886,16 @@ end subroutine clubb_init_cnst
        vm(i,k)      = state1%v(i,k)
        thlm(i,k)    = state1%t(i,k)*exner_clubb(i,k)-(latvap/cpair)*state1%q(i,k,ixcldliq)
 
+       ! Water tracers code block begins    
+       ! Initialize wtrc_rtm (mean water ratio)
+        if(trace_water) then
+            do m=1,wtrc_nwset
+                wtrc_rtm(i,k,m) = state1%q(i,k,wtrc_iatype(m,iwtvap))+&
+                                    state1%q(i,k,wtrc_iatype(m,iwtliq))
+            end do
+        end if
+       ! Water tracers code block ends
+
        if (clubb_do_adv) then
           if (macmic_it .eq. 1) then
 
@@ -1832,6 +1931,14 @@ end subroutine clubb_init_cnst
    um(1:ncol,pverp)   = state1%u(1:ncol,pver)
    vm(1:ncol,pverp)   = state1%v(1:ncol,pver)
    thlm(1:ncol,pverp) = thlm(1:ncol,pver)
+
+   ! Water tracers code block begins 
+    if(trace_water) then
+        do m=1,wtrc_nwset
+            wtrc_rtm(1:ncol,pverp,m) = wtrc_rtm(1:ncol,pver,m)
+        end do
+    end if
+   ! Water tracers code block ends
 
    if (clubb_do_adv) then
       thlp2(1:ncol,pverp)=thlp2(1:ncol,pver)
@@ -2040,6 +2147,36 @@ end subroutine clubb_init_cnst
       upwp_sfc   = real(cam_in%wsx(i), kind = core_rknd)/rho_ds_zm(1)                                 ! Surface meridional momentum flux
       vpwp_sfc   = real(cam_in%wsy(i), kind = core_rknd)/rho_ds_zm(1)                                 ! Surface zonal momentum flux
 
+      ! Water tracers code block begins 
+        if(trace_water) then
+            do m=1,wtrc_nwset
+                wtrc_wprtp_sfc(m) = real(cam_in%cflx(i,wtrc_iatype(m,iwtvap)), kind = core_rknd)/rho_ds_zm(1)
+            end do
+            !Adjust surface fluxes for any errors:
+            wtrc_vtmp  = wtrc_wprtp_sfc(1)    !copy original quantity
+            wtrc_vdiff = wtrc_vtmp-wprtp_sfc  !calculate difference
+            do m=1,wtrc_nwset
+                !calculate ratio
+                R = wtrc_ratio(iwspec(wtrc_iatype(m,iwtvap)),&
+                                wtrc_wprtp_sfc(m),wtrc_vtmp)
+                !apply fix to remove difference
+                wtrc_wprtp_sfc(m) = wtrc_wprtp_sfc(m)-R*wtrc_vdiff
+            end do
+            !Remove/adjust any quantities that are clearly outliers:
+            do m=2,wtrc_nwset
+                if(abs(wtrc_wprtp_sfc(m)) .gt. 10.0*abs(wtrc_wprtp_sfc(1))) then
+                    !Print out warning:
+                    !write(*,*) 'Large Surface WTRC/WISO Evap Flux Error in CAM/CLUBB:',&
+                    !           wtrc_wprtp_sfc(m), wtrc_wprtp_sfc(1),&
+                    !           wtrc_rtm(i,pver,m), wtrc_rtm(i,pver,1),&
+                    !           lchnk,i,m
+                    !Reset surface fluxes:
+                    wtrc_wprtp_sfc(m) = wtrc_wprtp_sfc(1)
+                end if
+            end do
+        end if
+      ! Water tracers code block ends
+
       ! ------------------------------------------------- !
       ! Apply TMS                                         !
       ! ------------------------------------------------- !
@@ -2085,6 +2222,19 @@ end subroutine clubb_init_cnst
          pdf_zm_varnce_w_1_inout(k) = pdf_zm_varnce_w_1(i,pverp-k+1)
          pdf_zm_varnce_w_2_inout(k) = pdf_zm_varnce_w_2(i,pverp-k+1)
          pdf_zm_mixt_frac_inout(k) =  pdf_zm_mixt_frac(i,pverp-k+1)
+
+         ! Water tracers code block begins
+         if (trace_water) then
+             do m = 1, wtrc_nwset
+                wtrc_rcm_inout(k,m)   = real(wtrc_rcm(i,pverp-k+1, m), kind = core_rknd)
+                wtrc_rtpthvp_inout(k,m)   = real(wtrc_rtpthvp(i,pverp-k+1, m), kind = core_rknd)
+                wtrc_rtp2_in(k,m)     = real(wtrc_rtp2(i,pverp-k+1, m), kind = core_rknd)
+                wtrc_wprtp_in(k,m)    = real(wtrc_wprtp(i,pverp-k+1, m), kind = core_rknd)
+                wtrc_rtpthlp_in(k,m)  = real(wtrc_rtpthlp(i,pverp-k+1, m), kind = core_rknd)
+                wtrc_rtm_in(k,m)      = real(wtrc_rtm(i,pverp-k+1, m), kind = core_rknd)
+             enddo
+         endif
+         ! Water tracers code block ends
 
          !  Higher order scalar inouts, set to zero
          sclrpthvp_inout(k,:)= 0._core_rknd
@@ -2185,10 +2335,24 @@ end subroutine clubb_init_cnst
         do k=1,pver
           edsclr_in(k+1,icnt+1) = real(thlm(i,pver-k+1), kind = core_rknd)
           edsclr_in(k+1,icnt+2) = real(rtm(i,pver-k+1), kind = core_rknd)
+          ! Water tracers code block begins
+            if (trace_water) then
+                do m=1,wtrc_nwset
+                    edsclr_in(k+1,icnt+2+m) = real(wtrc_rtm(i,pver-k+1,m), kind = core_rknd)
+                end do 
+            endif
+          ! Water tracers code block ends
         enddo
 
         edsclr_in(1,icnt+1) = edsclr_in(2,icnt+1)
         edsclr_in(1,icnt+2) = edsclr_in(2,icnt+2)
+        ! Water tracers code block begins 
+        if (trace_water) then
+             do m = 1, wtrc_nwset
+                edsclr_in(1,icnt+2+m) = edsclr_in(2,icnt+2+m)
+             enddo
+        endif
+        ! Water tracers code block ends
       endif
 
       rho_in(:) = real(rho(i,:), kind = core_rknd)
@@ -2269,13 +2433,13 @@ end subroutine clubb_init_cnst
               host_dx, host_dy, &                                          ! intent(in)
               um_in, vm_in, upwp_in, &                                     ! intent(inout)
               vpwp_in, up2_in, vp2_in, &                                   ! intent(inout)
-              thlm_in, rtm_in, wprtp_in, wpthlp_in, &                      ! intent(inout)
+              thlm_in, rtm_in, wtrc_rtm_in, wprtp_in, wpthlp_in, &                      ! intent(inout)
               wp2_in, wp3_in, rtp2_in, &                                   ! intent(inout)
               rtp3_in, thlp2_in, thlp3_in, rtpthlp_in, &                   ! intent(inout)
               sclrm,   &                                                   ! intent(inout)
               sclrp2, sclrprtp, sclrpthlp, &                               ! intent(inout)
               wpsclrp, edsclr_in, err_code, &                              ! intent(inout)
-              rcm_inout, cloud_frac_inout, &                               ! intent(inout)
+              rcm_inout, wtrc_rcm_inout, cloud_frac_inout, &                               ! intent(inout)
               wpthvp_inout, wp2thvp_inout, rtpthvp_inout, thlpthvp_inout, & ! intent(inout)
               sclrpthvp_inout, &                                            ! intent(inout)
               pdf_params, pdf_params_zm, &                                 ! intent(inout)
@@ -2430,6 +2594,19 @@ end subroutine clubb_init_cnst
               edsclr_out(k,ixind) = real(edsclr_in(pverp-k+1,ixind), kind = r8)
           enddo
 
+          ! Water tracers code block begins 
+          if (trace_water) then
+             do m = 1, wtrc_nwset
+                wtrc_rtpthlp(i,k,m)      = real(wtrc_rtpthlp_in(pverp-k+1,m), kind = r8)
+                wtrc_rtpthvp(i,k,m)      = real(wtrc_rtpthvp_inout(pverp-k+1,m), kind = r8)
+                wtrc_rtm(i,k,m)          = real(wtrc_rtm_in(pverp-k+1,m), kind = r8)
+                wtrc_wprtp(i,k,m)        = real(wtrc_wprtp_in(pverp-k+1,m), kind = r8)
+                wtrc_rtp2(i,k,m)         = real(wtrc_rtp2_in(pverp-k+1,m), kind = r8)
+                wtrc_rcm(i,k,m)          = real(wtrc_rcm_inout(pverp-k+1,m), kind = r8)
+             enddo
+          endif
+          ! Water tracers code block ends
+
       enddo
 
       !  Fill up arrays needed for McICA.  Note we do not want the ghost point,
@@ -2490,6 +2667,16 @@ end subroutine clubb_init_cnst
          ptend_loc%q(i,k,ixq) = (rtm(i,k)-rcm(i,k)-state1%q(i,k,ixq))*invrs_hdtime  ! water vapor
          ptend_loc%q(i,k,ixcldliq) = (rcm(i,k)-state1%q(i,k,ixcldliq))*invrs_hdtime ! Tendency of liquid water
          ptend_loc%s(i,k)   = (clubb_s(k)-state1%s(i,k))*invrs_hdtime               ! Tendency of static energy
+        ! Water tracers code block begins   
+         if (trace_water) then
+           do m = 1, wtrc_nwset
+               ptend_loc%q(i,k,wtrc_iatype(m,iwtvap)) = ((wtrc_rtm(i,k,m) - &
+                    wtrc_rcm(i,k,m)) - state1%q(i,k,wtrc_iatype(m,iwtvap)))*invrs_hdtime
+               ptend_loc%q(i,k,wtrc_iatype(m,iwtliq)) = (wtrc_rcm(i,k,m)- &
+                    state1%q(i,k,wtrc_iatype(m,iwtliq)))*invrs_hdtime      
+           enddo
+        endif
+! Water tracers code block ends      
 
          if (clubb_do_adv) then
             if (macmic_it .eq. cld_macmic_num_steps) then
@@ -2537,7 +2724,9 @@ end subroutine clubb_init_cnst
                    (ixind /= ixthlp2)   .and. (ixind /= ixrtp2)   .and.&
                    (ixind /= ixrtpthlp) .and. (ixind /= ixwpthlp) .and.&
                    (ixind /= ixwprtp)   .and. (ixind /= ixwp2)    .and.&
-                   (ixind /= ixwp3)     .and. (ixind /= ixup2)    .and. (ixind /= ixvp2) ) then
+                   (ixind /= ixwp3)     .and. (ixind /= ixup2)    .and.&
+                   (ixind /= ixvp2)     .and. (all(ixind /= wtrc_iatype(:,iwtvap))) .and.& !water tracers
+                   (all(ixind /= wtrc_iatype(:,iwtliq)))) then   
                        ptend_loc%q(i,k,ixind) = (edsclr_out(k,icnt)-state1%q(i,k,ixind))*invrs_hdtime ! transported constituents
                end if
             end if
@@ -2607,6 +2796,14 @@ end subroutine clubb_init_cnst
    lqice(ixcldice) = .true.
    lqice(ixnumliq) = .true.
    lqice(ixnumice) = .true.
+   ! Water tracers code block begins
+    if (trace_water) then
+        do m=1,wtrc_nwset
+            lqice(wtrc_iatype(m,iwtliq)) = .true.
+            lqice(wtrc_iatype(m,iwtice)) = .true.
+        end do
+    end if  
+   ! Water tracers code block ends
 
    call physics_ptend_init(ptend_loc,state%psetcols, 'clubb_det', ls=.true., lq=lqice)
 
@@ -2634,6 +2831,15 @@ end subroutine clubb_init_cnst
                                      3._r8 * (                         dlf2(i,k)    *  dum1 ) &
                                      / (4._r8*3.14_r8*clubb_ice_sh**3*500._r8)     ! Shallow Convection
          ptend_loc%s(i,k)          = dlf(i,k) * dum1 * latice
+
+         if ((trace_water) .and. (wtrc_detrain_in_macrop)) then
+           call pbuf_get_field(pbuf, wtdlf_idx, wtdlf)
+            do m=1,wtrc_nwset
+                ptend_loc%q(i,k,wtrc_iatype(m,iwtliq)) = wtdlf(i,k,m) * (1._r8 - dum1)
+                ptend_loc%q(i,k,wtrc_iatype(m,iwtice)) = wtdlf(i,k,m) * dum1
+            end do
+         end if
+
 
          ! Only rliq is saved from deep convection, which is the reserved liquid.  We need to keep
          !   track of the integrals of ice and static energy that is effected from conversion to ice
@@ -3079,6 +3285,9 @@ end subroutine clubb_init_cnst
     use constituents,           only: pcnst, cnst_get_ind, cnst_type
     use co2_cycle,              only: co2_cycle_set_cnst_type
     use camsrfexch,             only: cam_in_t
+
+    use water_tracer_vars,      only: wtrc_nwset, wtrc_iatype
+    use water_types,            only: iwtvap
 
     implicit none
 

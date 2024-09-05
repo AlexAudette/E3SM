@@ -47,6 +47,7 @@ contains
     use chemistry,               only: chem_implements_cnst, chem_init_cnst
     use tracers,                 only: tracers_implements_cnst, tracers_init_cnst
     use aoa_tracers,             only: aoa_tracers_implements_cnst, aoa_tracers_init_cnst
+    use water_tracers,           only: wtrc_implements_cnst, wtrc_init_cnst
     use clubb_intr,              only: clubb_implements_cnst, clubb_init_cnst
     use stratiform,              only: stratiform_implements_cnst, stratiform_init_cnst
     use microp_driver,           only: microp_driver_implements_cnst, microp_driver_init_cnst
@@ -68,6 +69,9 @@ contains
     type(element_t), pointer :: elem(:)
     real(r8), allocatable :: tmp(:,:,:)    ! (npsp,nlev,nelemd)
     real(r8), allocatable :: qtmp(:,:)     ! (npsp*nelemd,nlev)
+    real(r8), allocatable :: wtrc_qtmp_in(:,:,:,:)     ! (npsp,nelemd,nlev,3)
+    real(r8), allocatable :: wtrc_qtmp(:,:,:)     ! (npsp*nelemd,nlev,3)
+
     real(r8) :: ps(np,np)     
     logical,  allocatable :: tmpmask(:,:)  ! (npsp,nlev,nelemd) unique grid val
     real(r8), allocatable :: phis_tmp(:,:) ! (nphys_sq,nelemd)
@@ -90,7 +94,7 @@ contains
     integer, allocatable :: rndm_seed(:)
     real(r8) :: pertval
     integer :: sysclk
-    integer :: i, j, indx, tl
+    integer :: i, j, indx, tl, indxx
     real(r8), parameter :: D0_0 = 0.0_r8
     real(r8), parameter :: D0_5 = 0.5_r8
     real(r8), parameter :: D1_0 = 1.0_r8
@@ -98,11 +102,14 @@ contains
     real(r8) :: scmposlon, minpoint, testlat, testlon, testval 
     character*16 :: subname='READ_INIDAT'
     integer :: nlev_tot
+    integer :: idxq, idxcldliq, idxcldice
 
     logical :: iop_update_surface
 
     tl = 1
-
+    idxq = 1
+    idxcldliq = 2 
+    idxcldice = 3
     if(par%dynproc) then
        elem=> dyn_in%elem
     else
@@ -116,7 +123,10 @@ contains
     end if
     allocate(tmp(npsq,nlev,nelemd))
     tmp = 0.0_r8
-    allocate(qtmp(npsq*nelemd,nlev))
+
+
+    
+
 
     if (fv_nphys>0) then
       nphys_sq = fv_nphys*fv_nphys
@@ -221,6 +231,58 @@ contains
           end do
        end do
     end do
+
+
+    allocate(qtmp(npsq*nelemd,nlev))
+    allocate(wtrc_qtmp(npsq*nelemd,nlev,3))
+    allocate(wtrc_qtmp_in(npsq,nlev,nelemd,3))
+
+    fieldname = 'Q'
+    wtrc_qtmp_in = 0.0_r8
+    call t_startf('read_inidat_infld')
+    call infld(fieldname, ncid_ini, ncol_name, 'lev', 1, npsq,          &
+         1, nlev, 1, nelemd, wtrc_qtmp_in(:,:,:,1), found, gridname=grid_name)
+    call t_stopf('read_inidat_infld')
+
+    if(.not. found) then
+       call endrun('Could not find Q field on input datafile')
+    end if
+
+    fieldname = 'CLDLIQ'
+
+    call t_startf('read_inidat_infld')
+    call infld(fieldname, ncid_ini, ncol_name, 'lev', 1, npsq,          &
+         1, nlev, 1, nelemd, wtrc_qtmp_in(:,:,:,2), found, gridname=grid_name)
+    call t_stopf('read_inidat_infld')
+
+    if(.not. found) then
+       call endrun('Could not find CLDLIQ field on input datafile')
+    end if
+
+    fieldname = 'CLDICE'
+
+    call t_startf('read_inidat_infld')
+    call infld(fieldname, ncid_ini, ncol_name, 'lev', 1, npsq,          &
+         1, nlev, 1, nelemd, wtrc_qtmp_in(:,:,:,3), found, gridname=grid_name)
+    call t_stopf('read_inidat_infld')
+
+    if(.not. found) then
+       call endrun('Could not find CLDICE field on input datafile')
+    end if
+
+
+   wtrc_qtmp = 0._r8
+   indxx = 1
+    do ie=1,nelemd
+      indx = 1
+      do j = 1, np
+         do i = 1, np
+            wtrc_qtmp(indxx,:,:) = wtrc_qtmp_in(indx,:,ie,:)
+            indx = indx + 1
+            indxx = indxx + 1
+         end do
+      end do
+   end do
 
     fieldname = 'T'
     tmp = 0.0_r8
@@ -371,6 +433,11 @@ contains
              call co2_init_cnst(cnst_name(m_cnst), qtmp, gcid)
               if(par%masterproc) write(iulog,*) '          ', cnst_name(m_cnst), &
                    ' initialized by "co2_init_cnst"'
+
+         else if (wtrc_implements_cnst(cnst_name(m_cnst))) then
+            call wtrc_init_cnst(cnst_name(m_cnst), qtmp, gcid, wtrc_qtmp(:,:,idxq), wtrc_qtmp(:,:,idxcldliq), wtrc_qtmp(:,:,idxcldice))
+            if(par%masterproc) write(iulog,*) '          ', cnst_name(m_cnst), &
+                  ' initialized by "wtrc_init_cnst"'
           else
               if(par%masterproc) write(iulog,*) '          ', cnst_name(m_cnst), ' set to 0.'
               qtmp = 0.0_r8
@@ -602,6 +669,7 @@ contains
     end do
 
     deallocate(tmp)
+    deallocate(wtrc_qtmp)
 
   end subroutine read_inidat
 
