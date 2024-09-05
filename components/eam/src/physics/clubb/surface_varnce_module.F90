@@ -13,10 +13,10 @@ module surface_varnce_module
 
   !=============================================================================
   subroutine calc_surface_varnce( upwp_sfc, vpwp_sfc, wpthlp_sfc, wprtp_sfc, & 
-                             um_sfc, vm_sfc, Lscale_up_sfc, wpsclrp_sfc, & 
+    um_sfc, vm_sfc, Lscale_up_sfc, wpsclrp_sfc, & 
                              wp2_splat_sfc, tau_zm_sfc, &
                              wp2_sfc, up2_sfc, vp2_sfc, & 
-                             thlp2_sfc, rtp2_sfc, rtpthlp_sfc, & 
+                             thlp2_sfc, rtp2_sfc, rtpthlp_sfc, &
                              sclrp2_sfc, & 
                              sclrprtp_sfc,  & 
                              sclrpthlp_sfc )
@@ -73,6 +73,10 @@ module surface_varnce_module
     use clubb_precision, only: &
         core_rknd ! Variable(s)
 
+    !water tracers
+    use water_tracer_vars, only: &
+        wtrc_nwset
+
     use parameters_tunable, only: &
         up2_vp2_factor ! Variable
 
@@ -113,6 +117,10 @@ module surface_varnce_module
       wp2_splat_sfc, & ! Tendency of <w'^2> due to splatting of eddies at zm(1) [m^2/s^3]
       tau_zm_sfc       ! Turbulent dissipation time at level zm(1)  [s]
 
+    !water tracers
+    real( kind = core_rknd ), dimension(wtrc_nwset) :: &
+      wtrc_wprtp_sfc   ! water tracer surface moisture flux [kg/kg m/s]
+
     real( kind = core_rknd ), intent(in), dimension(sclr_dim) ::  & 
       wpsclrp_sfc    ! Passive scalar flux, <w'sclr'>|_sfc   [units m/s]
 
@@ -124,6 +132,11 @@ module surface_varnce_module
       thlp2_sfc,   & ! Surface variance of theta-l, <thl'^2>|_sfc    [K^2]
       rtp2_sfc,    & ! Surface variance of rt, <rt'^2>|_sfc          [(kg/kg)^2]
       rtpthlp_sfc    ! Surface covariance of rt and theta-l          [kg K/kg]
+
+    !water tracers
+    real( kind = core_rknd ), dimension(wtrc_nwset) :: &
+      wtrc_rtp2_sfc, &  ! water tracer surface total water variance [(kg/kg)^2]
+      wtrc_rtpthlp_sfc  ! water tracer total water covariance with theta-l [kg K/kg]
 
     real( kind = core_rknd ), intent(out), dimension(sclr_dim) ::  & 
       sclrp2_sfc,    & ! Surface variance of passive scalar            [units^2]
@@ -153,6 +166,8 @@ module surface_varnce_module
       zeta     ! Dimensionless height z_const/Lngth, where z_const = 1 m.  [-]
 
     integer :: i ! Loop index
+
+    integer :: m ! water tracer loop index
 
     if ( l_andre_1978 ) then
 
@@ -206,6 +221,17 @@ module surface_varnce_module
                         * ( wprtp_sfc * wpthlp_sfc / ustar**2 ) & 
                         * four * ( one - 8.3_core_rknd * zeta )**(-two_thirds)
 
+          !water tracers
+          do m=1,wtrc_nwset
+            wtrc_rtp2_sfc(m) = reduce_coef &
+                               * ( wtrc_wprtp_sfc(m)**2 / ustar**2 ) &
+                               * four * (one - 8.3_core_rknd * zeta )**(-two_thirds)
+
+            wtrc_rtpthlp_sfc(m) = reduce_coef  &
+                        * ( wtrc_wprtp_sfc(m) * wpthlp_sfc / ustar**2 ) &
+                        * four * ( one - 8.3_core_rknd * zeta )**(-two_thirds)
+          end do
+
           wp2_sfc     = ( ustar**2 ) & 
                         * ( 1.75_core_rknd + two * (-zeta)**(two_thirds) )
 
@@ -220,12 +246,24 @@ module surface_varnce_module
           rtpthlp_sfc = reduce_coef  & 
                         * four * ( wprtp_sfc * wpthlp_sfc / ustar**2 )
 
+          !water tracers
+          do m=1,wtrc_nwset
+            wtrc_rtp2_sfc(m) = reduce_coef &
+                               * four * ( wtrc_wprtp_sfc(m)**2 / ustar**2 )
+
+            wtrc_rtpthlp_sfc(m) = reduce_coef  &
+                        * four * ( wtrc_wprtp_sfc(m) * wpthlp_sfc / ustar**2 )
+          end do
+
           wp2_sfc     = 1.75_core_rknd * ustar**2
 
        endif
        
        thlp2_sfc = max( thl_tol**2, thlp2_sfc )
        rtp2_sfc = max( rt_tol**2, rtp2_sfc )
+         do m = 1, wtrc_nwset
+            wtrc_rtp2_sfc(m) = max( rt_tol**2, wtrc_rtp2_sfc(m) )
+         enddo
 
        ! Calculate wstar following Andre et al., 1978, p. 1866.
        ! w* = ( ( 1 / T0 ) * g * <w'thl'>|_sfc * z_i )^(1/3);
@@ -381,6 +419,15 @@ module surface_varnce_module
 
        rtpthlp_sfc = 0.2_core_rknd * a_const &
                      * ( wpthlp_sfc / uf ) * ( wprtp_sfc / uf )
+
+       !water tracers
+       do m=1,wtrc_nwset
+         wtrc_rtp2_sfc(m) = 0.4_core_rknd * a_const * ( wtrc_wprtp_sfc(m) / uf )**2
+         wtrc_rtp2_sfc(m) = max( rt_tol**2, wtrc_rtp2_sfc(m))
+
+         wtrc_rtpthlp_sfc(m) = 0.2_core_rknd * a_const &
+                     * ( wpthlp_sfc / uf ) * ( wtrc_wprtp_sfc(m) / uf )
+       end do
 
        ! Add effect of vertical compression of eddies on horizontal gustiness.
        ! First, ensure that wp2_sfc does not make the correlation 

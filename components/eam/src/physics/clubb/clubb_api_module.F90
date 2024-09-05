@@ -17,6 +17,9 @@
 !
 module clubb_api_module
 
+    use cam_abortutils, only: endrun
+    use time_manager,   only: is_first_step
+
   use mt95, only : &
     assignment( = ), &
     genrand_state, & ! Internal representation of the RNG state.
@@ -520,7 +523,7 @@ contains
     wphydrometp, wp2hmp, rtphmp, thlphmp, &                 ! intent(in)
     host_dx, host_dy, &                                     ! intent(in)
     um, vm, upwp, vpwp, up2, vp2, &                         ! intent(inout)
-    thlm, rtm, wprtp, wpthlp, &                             ! intent(inout)
+    thlm, rtm, wtrc_rtm, wprtp, wpthlp, &                             ! intent(inout)
     wp2, wp3, rtp2, rtp3, thlp2, thlp3, rtpthlp, &          ! intent(inout)
     sclrm,   &
 #ifdef GFDL
@@ -528,7 +531,7 @@ contains
 #endif
     sclrp2, sclrprtp, sclrpthlp, &                          ! intent(inout)
     wpsclrp, edsclrm, err_code_api, &                       ! intent(inout)
-    rcm, cloud_frac, &                                      ! intent(inout)
+    rcm, wtrc_rcm, cloud_frac, &                                      ! intent(inout)
     wpthvp, wp2thvp, rtpthvp, thlpthvp, &                   ! intent(inout)
     sclrpthvp, &                                            ! intent(inout)
     pdf_params, pdf_params_zm, &                            ! intent(inout)
@@ -549,9 +552,15 @@ contains
 
     use advance_clubb_core_module, only : advance_clubb_core
 
+    ! Water tracers code block begins 
+    use water_tracer_vars, only: wtrc_nwset, trace_water
+    ! Water tracers code block ends
+
     use parameters_model, only: &
       sclr_dim, & ! Variable(s)
       edsclr_dim
+
+    use cam_logfile, only : iulog
 
     implicit none
       !!! Input Variables
@@ -593,6 +602,7 @@ contains
       thv_ds_zt,       & ! Dry, base-state theta_v on thermo. levs.  [K]
       rfrzm              ! Total ice-phase water mixing ratio        [kg/kg]
 
+
     real( kind = core_rknd ), dimension(gr%nz,hydromet_dim), intent(in) :: &
       hydromet           ! Collection of hydrometeors                [units vary]
 
@@ -615,6 +625,7 @@ contains
       wprtp_sfc,    & ! w' r_t' at surface       [(kg m)/( kg s)]
       upwp_sfc,     & ! u'w' at surface          [m^2/s^2]
       vpwp_sfc        ! v'w' at surface          [m^2/s^2]
+
 
     ! Passive scalar variables
     real( kind = core_rknd ), intent(in), dimension(gr%nz,sclr_dim) :: &
@@ -656,6 +667,12 @@ contains
       rtpthlp, & ! r_t' th_l' (momentum levels)                   [(kg/kg) K]
       wp2,     & ! w'^2 (momentum levels)                         [m^2/s^2]
       wp3        ! w'^3 (thermodynamic levels)                    [m^3/s^3]
+
+    ! Water tracers code block begins 
+    real( kind = core_rknd ), intent(inout), dimension(gr%nz, wtrc_nwset) ::  &
+    wtrc_rtm,       &   ! water tracer/isotope total water mixing ratio (thermo levels).
+    wtrc_rcm            ! water tracer/isotope cloud water mixing ratio (thermo levels).
+    ! Water tracers code block ends
 
     ! Passive scalar variables
     real( kind = core_rknd ), intent(inout), dimension(gr%nz,sclr_dim) :: &
@@ -726,6 +743,10 @@ contains
       vm_pert,      & ! pertubed northward grid-mean wind component (thermodynamic levels)   [m/s]
       upwp_pert,    & ! pertubed u'w' (momentum levels)                         [m^2/s^2]
       vpwp_pert       ! pertubed v'w' (momentum levels)                         [m^2/s^2]
+
+
+      integer :: k ! Debugging AAUDETTE
+
     call advance_clubb_core( &
       l_implemented, dt, fcor, sfc_elevation, hydromet_dim, & ! intent(in)
       thlm_forcing, rtm_forcing, um_forcing, vm_forcing, &    ! intent(in)
@@ -744,7 +765,7 @@ contains
       wphydrometp, wp2hmp, rtphmp, thlphmp, &                 ! intent(in)
       host_dx, host_dy, &                                     ! intent(in)
       um, vm, upwp, vpwp, up2, vp2, &                         ! intent(inout)
-      thlm, rtm, wprtp, wpthlp, &                             ! intent(inout)
+      thlm, rtm, wtrc_rtm, wprtp, wpthlp, &                             ! intent(inout)
       wp2, wp3, rtp2, rtp3, thlp2, thlp3, rtpthlp, &          ! intent(inout)
       sclrm,   &
 #ifdef GFDL
@@ -752,7 +773,7 @@ contains
 #endif
       sclrp2, sclrprtp, sclrpthlp, &                          ! intent(inout)
       wpsclrp, edsclrm, &                                     ! intent(inout)
-      rcm, cloud_frac, &                                      ! intent(inout)
+      rcm, wtrc_rcm, cloud_frac, &                                      ! intent(inout)
       wpthvp, wp2thvp, rtpthvp, thlpthvp, &                   ! intent(inout)
       sclrpthvp, &                                            ! intent(inout)
       pdf_params, pdf_params_zm, &                            ! intent(inout)

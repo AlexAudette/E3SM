@@ -32,7 +32,8 @@ module clip_explicit
     clip_sclrp2 = 14, &      ! Named constant for sclrp2 clipping
     clip_sclrprtp = 15, &    ! Named constant for sclrprtp clipping
     clip_sclrpthlp = 16, &   ! Named constant for sclrpthlp clipping
-    clip_wphydrometp = 17    ! Named constant for wphydrometp clipping
+    clip_wphydrometp = 17,&    ! Named constant for wphydrometp clipping
+    clip_wtrc_wprtp = 18 ! For water tracer wprtp sclipping
 
   contains
 
@@ -86,6 +87,8 @@ module clip_explicit
       up2,   & ! u'^2           [m^2/s^2]
       vp2,   & ! v'^2           [m^2/s^2]
       wp2      ! w'^2           [m^2/s^2]
+    
+
 
     real( kind = core_rknd ), dimension(gr%nz,sclr_dim), intent(in) :: &
       sclrp2 ! sclr'^2  [{units vary}^2]
@@ -103,6 +106,7 @@ module clip_explicit
       wpthlp, & ! w'theta_l'    [K m/s]
       upwp,   & ! u'w'          [m^2/s^2]
       vpwp      ! v'w'          [m^2/s^2]
+
 
     real( kind = core_rknd ), dimension(gr%nz,sclr_dim), intent(inout) :: &
       wpsclrp ! w'sclr'         [units m/s]
@@ -122,10 +126,12 @@ module clip_explicit
       upwp_chnge,   & ! Net change in u'w' due to clipping    [m^2/s^2]
       vpwp_chnge      ! Net change in v'w' due to clipping    [m^2/s^2]
 
+
     real( kind = core_rknd ), dimension(gr%nz,sclr_dim) :: &
       wpsclrp_chnge   ! Net change in w'sclr' due to clipping [{units vary}]
 
     integer :: i  ! scalar array index.
+
 
     ! ---- Begin Code ----
 
@@ -164,6 +170,7 @@ module clip_explicit
     call clip_covar( clip_wprtp, l_first_clip_ts,   & ! intent(in) 
                      l_last_clip_ts, dt, wp2, rtp2, & ! intent(in)
                      wprtp, wprtp_chnge )             ! intent(inout)
+
 
 
     !!! Clipping for w'th_l'
@@ -465,6 +472,8 @@ module clip_explicit
     select case ( solve_type )
     case ( clip_wprtp )   ! wprtp clipping budget term
       ixpyp_cl = iwprtp_cl
+    case ( clip_wtrc_wprtp )   ! wprtp clipping budget term
+        ixpyp_cl = iwprtp_cl
     case ( clip_wpthlp )   ! wpthlp clipping budget term
       ixpyp_cl = iwpthlp_cl
     case ( clip_rtpthlp )   ! rtpthlp clipping budget term
@@ -497,7 +506,7 @@ module clip_explicit
     ! When clipping for wprtp or wpthlp, use the special value for
     ! max_mag_correlation_flux.  For all other correlations, use
     ! max_mag_correlation.
-    if ( ( solve_type == clip_wprtp ) .or. ( solve_type == clip_wpthlp ) ) then
+    if ( ( solve_type == clip_wprtp ) .or. ( solve_type == clip_wpthlp ) .or. ( solve_type == clip_wtrc_wprtp ) ) then
        max_mag_corr = max_mag_correlation_flux
     else ! All other covariances
        max_mag_corr = max_mag_correlation

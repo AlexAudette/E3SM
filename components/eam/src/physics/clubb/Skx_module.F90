@@ -2,7 +2,8 @@
 !$Id$
 !===============================================================================
 module Skx_module
-
+    use cam_logfile, only: iulog
+    use cam_abortutils, only: endrun
   implicit none
 
   private ! Default Scope
@@ -65,11 +66,19 @@ module Skx_module
 
     ! ---- Begin Code ----
 
-    Skx_denom_tol = Skw_denom_coef * x_tol**2
+    !   Skx_denom_tol = Skw_denom_coef * x_tol**2
+      Skx_denom_tol = 4.0_core_rknd * x_tol**2
 
-    !Skx = xp3 / ( max( xp2, x_tol**two ) )**three_halves
+    !Skx = xp3 / ( max( xp2, x_tol**2 ) )**three_halves
     ! Calculation of skewness to help reduce the sensitivity of this value to
     ! small values of xp2.
+
+    if (ANY((xp2 + Skx_denom_tol) .lt. 1e-16)) then
+        write(iulog, *) 'xp2=', xp2
+        write(iulog, *) 'Skx_denom_tol', Skx_denom_tol
+        write(iulog, *) 'Skw_denom_coef', Skw_denom_coef
+        call endrun('Skx divide by 0')
+    endif
     Skx = xp3 / ( ( xp2 + Skx_denom_tol ) * sqrt( xp2 + Skx_denom_tol ) )
 
     ! This is no longer needed since clipping is already

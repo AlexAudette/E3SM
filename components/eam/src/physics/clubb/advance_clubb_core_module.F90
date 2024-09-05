@@ -3,7 +3,19 @@
 !-----------------------------------------------------------------------
 
 module advance_clubb_core_module
-
+    use time_manager, only: is_first_step
+    use water_tracer_vars, only: &
+        wtrc_nwset,  &
+        wtrc_iatype, &
+        iwspec,      &
+        wisotope, &
+        trace_water, &
+        wtrc_iawset
+    use water_tracers, only: &
+        wtrc_ratio
+    use water_types, only: &
+        iwtvap, &
+        iwtliq
 ! Description:
 !   The module containing the `core' of the CLUBB parameterization.
 !   It advances CLUBB's equations one model time step.
@@ -90,6 +102,10 @@ module advance_clubb_core_module
 
   use model_flags, only: ipdf_call_placement 
 
+  use cam_logfile, only: iulog
+
+  use cam_abortutils, only: endrun
+
   implicit none
 
   public ::  &
@@ -139,7 +155,7 @@ module advance_clubb_core_module
                wphydrometp, wp2hmp, rtphmp_zt, thlphmp_zt, &        ! intent(in)
                host_dx, host_dy, &                                  ! intent(in)
                um, vm, upwp, vpwp, up2, vp2, &                      ! intent(inout)
-               thlm, rtm, wprtp, wpthlp, &                          ! intent(inout)
+               thlm, rtm, wtrc_rtm, wprtp, wpthlp, &                          ! intent(inout)
                wp2, wp3, rtp2, rtp3, thlp2, thlp3, rtpthlp, &       ! intent(inout)
                sclrm,   &                                           ! intent(inout)
 #ifdef GFDL
@@ -147,7 +163,7 @@ module advance_clubb_core_module
 #endif
                sclrp2, sclrprtp, sclrpthlp, &                       ! intent(inout)
                wpsclrp, edsclrm, &                                  ! intent(inout)
-               rcm, cloud_frac, &                                   ! intent(inout)
+               rcm, wtrc_rcm, cloud_frac, &                                   ! intent(inout)
                wpthvp, wp2thvp, rtpthvp, thlpthvp, &                ! intent(inout)
                sclrpthvp, &                                         ! intent(inout)
                pdf_params, pdf_params_zm, &                         ! intent(inout)
@@ -442,6 +458,24 @@ module advance_clubb_core_module
 
     use interpolation, only: &
       pvertinterp
+    
+    ! Water tracers code block begins 
+    use water_tracer_vars, only: &
+        wtrc_nwset,  &
+        wtrc_iatype, &
+        iwspec,      &
+        wisotope, &
+        trace_water
+    use water_tracers, only: &
+        wtrc_ratio, &
+        wtrc_get_alpha, &
+        wtrc_liqvap_equil
+    use water_types, only: &
+        iwtvap, &
+        iwtliq
+    use wtrc_pdf_closure_module, only: &
+        wtrc_pdf_closure
+    ! Water tracers code block ends
 
     implicit none
 
@@ -564,6 +598,17 @@ module advance_clubb_core_module
       rtpthlp, & ! r_t'th_l' (momentum levels)                    [(kg/kg) K]
       wp2,     & ! w'^2 (momentum levels)                         [m^2/s^2]
       wp3        ! w'^3 (thermodynamic levels)                    [m^3/s^3]
+
+    ! Water tracers code block begins 
+
+    real( kind = core_rknd ), dimension(gr%nz, wtrc_nwset) ::  &
+    wtrc_rcm_old, &
+    wtrc_rtm_old
+
+    real( kind = core_rknd ), intent(inout), dimension(gr%nz, wtrc_nwset) ::  &
+        wtrc_rtm,       & ! water tracer/isotope total water mixing ratio (thermo levels).
+    wtrc_rcm
+    ! Water tracers code block ends
 
     ! Passive scalar variables
     real( kind = core_rknd ), intent(inout), dimension(gr%nz,sclr_dim) :: &
@@ -706,6 +751,15 @@ module advance_clubb_core_module
       wpsclrp_zt,           & ! Scalar flux on thermo. levels        [un. vary]
       sclrp2_zt               ! Scalar variance on thermo.levels     [un. vary]
 
+      ! Water tracer code block begins
+    real( kind = core_rknd ), dimension(gr%nz, wtrc_nwset):: &
+        R_vap, &
+        R_liq, &
+        wtrc_rtm_zm, &
+        wtrc_rcm_zm
+    integer :: m              !loop control variable  
+    ! Water tracers code block ends
+
     real( kind = core_rknd ), dimension(gr%nz,sclr_dim) :: &
       sclrp3    ! <sclr'^3> (thermodynamic levels)    [un. vary]
 
@@ -785,6 +839,9 @@ module advance_clubb_core_module
     !  Km_Skw_factor_min   = 0.2_core_rknd    ! Minimum value of Km_Skw_factor
 
     !----- Begin Code -----
+
+      wtrc_rcm_old = wtrc_rcm
+      wtrc_rtm_old = wtrc_rtm
 
     ! Sanity checks
     if ( clubb_at_least_debug_level( 0 ) ) then
@@ -957,7 +1014,6 @@ module advance_clubb_core_module
        !#######                     CALL CLUBB's PDF                     #######
        !#######   AND OUTPUT PDF PARAMETERS AND INTEGRATED QUANTITITES   #######
        !########################################################################
-       !call pdf_closure_driver( dt, hydromet_dim, rtm, wprtp,  & ! Intent(in)
        call pdf_closure_driver( dt, hydromet_dim, wprtp,       & ! Intent(in)
                                 thlm, wpthlp, rtp2, rtp3,      & ! Intent(in)
                                 thlp2, thlp3, rtpthlp, wp2,    & ! Intent(in)
@@ -971,12 +1027,12 @@ module advance_clubb_core_module
                                 sclrm, wpsclrp, sclrp2,        & ! Intent(in)
                                 sclrprtp, sclrpthlp,           & ! Intent(in)
                                 l_samp_stats_in_pdf_call,      & ! Intent(in)
-                                rtm,                           & ! Intent(i/o)
+                                rtm, wtrc_rtm,                           & ! Intent(i/o)
 #ifdef GFDL
                                 RH_crit(k, : , :),             & ! Intent(i/o)
                                 do_liquid_only_in_clubb,       & ! Intent(in)
 #endif
-                                rcm, cloud_frac,               & ! Intent(out)
+                                rcm, wtrc_rcm, cloud_frac,               & ! Intent(out)
                                 ice_supersat_frac, wprcp,      & ! Intent(out)
                                 sigma_sqd_w, wpthvp, wp2thvp,  & ! Intent(out)
                                 rtpthvp, thlpthvp, rc_coef,    & ! Intent(out)
@@ -990,17 +1046,22 @@ module advance_clubb_core_module
                                 Skw_velocity,                  & ! Intent(out)
                                 cloud_frac_zm,                 & ! Intent(out)
                                 ice_supersat_frac_zm,          & ! Intent(out)
-                                rtm_zm, thlm_zm, rcm_zm,       & ! Intent(out)
+                                rtm_zm, wtrc_rtm_zm, thlm_zm, rcm_zm, wtrc_rcm_zm,       & ! Intent(out)
                                 rcm_supersat_adj,              & ! Intent(out)
                                 wp2sclrp, wpsclrp2, sclrprcp,  & ! Intent(out)
                                 wpsclrprtp, wpsclrpthlp,       & ! Intent(out)
                                 pdf_params, pdf_params_frz,    & ! Intent(out)
                                 pdf_params_zm,                 & ! Intent(out)
                                 pdf_implicit_coefs_terms )       ! Intent(out)
-
+    
     endif ! ipdf_call_placement == ipdf_pre_advance_fields
           ! or ipdf_call_placement == ipdf_pre_post_advance_fields
-
+    do k = 1, gr%nz
+        if (abs( wtrc_rtm(k,1) - rtm(k)) .gt. 1e-12) then
+            ! write(iulog, *) ' RTM error', wtrc_rtm(k,1), rtm(k)
+            ! call endrun('RTM error')
+        endif
+    enddo
     ! Interpolate wp3 to momentum levels, and wp2 to thermodynamic levels
     ! and then compute Skw for m & t grid.
     wp2_zt = max( zm2zt( wp2 ), w_tol_sqd ) ! Positive definite quantity
@@ -1389,7 +1450,7 @@ module advance_clubb_core_module
                              thlp2(1), rtp2(1), rtpthlp(1),                  &      ! intent(out)
                              sclrp2(1,1:sclr_dim),                           &      ! intent(out)
                              sclrprtp(1,1:sclr_dim),                         &      ! intent(out)
-                             sclrpthlp(1,1:sclr_dim) )                              ! intent(out)
+                             sclrpthlp(1,1:sclr_dim) )                              ! intent(out)  
 
         if ( clubb_at_least_debug_level( 0 ) ) then
           if ( err_code == clubb_fatal_error ) then
@@ -1519,7 +1580,7 @@ module advance_clubb_core_module
       !   the scalar grid means (rtm, thlm, sclrm) and
       !   scalar turbulent fluxes (wprtp, wpthlp, and wpsclrp)
       !   by one time step.
-      ! advance_xm_wpxp_bad_wp2 ! Test error comment, DO NOT modify or move
+
       call advance_xm_wpxp( dt, sigma_sqd_w, wm_zm, wm_zt, wp2,              & ! intent(in)
                             Lscale, wp3_on_wp2, wp3_on_wp2_zt, Kh_zt, Kh_zm, & ! intent(in)
                             tau_C6_zm, Skw_zm, wp2rtp, rtpthvp, rtm_forcing, & ! intent(in)
@@ -1535,10 +1596,15 @@ module advance_clubb_core_module
                             um_forcing, vm_forcing, ug, vg, wpthvp,          & ! intent(in)
                             fcor, um_ref, vm_ref, up2, vp2,                  & ! intent(in)
                             uprcp, vprcp, rc_coef,                           & ! intent(in)
-                            rtm, wprtp, thlm, wpthlp,                        & ! intent(inout)
+                            rtm, wtrc_rtm, wprtp, thlm, wpthlp,                        & ! intent(inout)
                             sclrm, wpsclrp, um, upwp, vm, vpwp,              & ! intent(inout)
                             um_pert, vm_pert, upwp_pert, vpwp_pert)            ! intent(inout)
-
+    do k = 1, gr%nz
+        if (abs( wtrc_rtm(k,1) - rtm(k)) .gt. 1e-12) then
+            ! write(iulog, *) ' RTM error', wtrc_rtm(k,1), rtm(k)
+            ! call endrun('RTM error')
+        endif
+    enddo
       if ( clubb_at_least_debug_level( 0 ) ) then
           if ( err_code == clubb_fatal_error ) then
             write(fstderr,*) "Error calling advance_xm_wpxp"
@@ -1552,6 +1618,25 @@ module advance_clubb_core_module
       ! radiation, and we do not want to bother recomputing it.  6 Aug 2009
       call clip_rcm( rtm, 'rtm < rcm in advance_xm_wpxp',             & ! intent(in)
                      rcm )                                              ! intent(inout)
+
+      wtrc_rcm_old = wtrc_rcm
+    if (trace_water) then
+        wtrc_rcm(:,1) = rcm
+         do m = 2, wtrc_nwset
+            do k = 1, gr%nz
+                wtrc_rcm(k,m) = wtrc_ratio(iwspec(wtrc_iawset(iwtliq,m)) , wtrc_rcm_old(k,m), wtrc_rcm_old(k,1)) * (wtrc_rcm(k,1) - wtrc_rcm_old(k,1)) + wtrc_rcm_old(k,m)
+            enddo
+         enddo
+         wtrc_rcm_old = wtrc_rcm
+    endif
+    do k = 1, gr%nz
+        if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
+            ! write(iulog, *) ' RcM error', wtrc_rcm(k,1), rcm(k)
+            ! call endrun('RcM error')
+        endif
+    enddo
+
+    ! Insert rcm calculation here.
 
 #ifdef GFDL
       call advance_sclrm_Nd_diffusion_OG( dt, &  ! h1g, 2012-06-16     ! intent(in)
@@ -1574,12 +1659,17 @@ module advance_clubb_core_module
       ! Advance the prognostic equations
       !   for scalar variances and covariances,
       !   plus the horizontal wind variances by one time step, by one time step.
-      call advance_xp2_xpyp( tau_zm, wm_zm, rtm, wprtp, thlm,        & ! intent(in)
+
+
+      call advance_xp2_xpyp( tau_zm, wm_zm, rtm, &
+                             wprtp, thlm,        & ! intent(in)
                              wpthlp, wpthvp, um, vm, wp2, wp2_zt,    & ! intent(in)
                              wp3, upwp, vpwp, sigma_sqd_w, Skw_zm,   & ! intent(in)
                              wprtp2, wpthlp2, wprtpthlp,             & ! intent(in)
-                             Kh_zt, rtp2_forcing, thlp2_forcing,     & ! intent(in)
-                             rtpthlp_forcing, rho_ds_zm, rho_ds_zt,  & ! intent(in)
+                             Kh_zt, rtp2_forcing, & ! intent(in)
+                             thlp2_forcing,                          & ! intent(in)
+                             rtpthlp_forcing,  & ! intent(in)
+                             rho_ds_zm, rho_ds_zt,                   & ! intent(in)
                              invrs_rho_ds_zm, thv_ds_zm, cloud_frac, & ! intent(in)
                              Lscale, wp3_on_wp2, wp3_on_wp2_zt,      & ! intent(in)
                              pdf_implicit_coefs_terms,               & ! intent(in)
@@ -1587,8 +1677,11 @@ module advance_clubb_core_module
                              sclrm, wpsclrp,                         & ! intent(in)
                              wpsclrp2, wpsclrprtp, wpsclrpthlp,      & ! intent(in)
                              wp2_splat,                              & ! intent(in)
-                             rtp2, thlp2, rtpthlp, up2, vp2,         & ! intent(inout)
+                             rtp2, thlp2, rtpthlp,        & ! intent(inout)
+                             up2, vp2,                 & ! intent(inout)
                              sclrp2, sclrprtp, sclrpthlp)              ! intent(inout)
+                             
+
 
       if ( clubb_at_least_debug_level( 0 ) ) then
           if ( err_code == clubb_fatal_error ) then
@@ -1662,7 +1755,6 @@ module advance_clubb_core_module
          upwp_cl_num = 2 ! Second instance of u'w' clipping.
          vpwp_cl_num = 2 ! Second instance of v'w' clipping.
       endif ! l_predict_upwp_vpwp
-
       call clip_covars_denom( dt, rtp2, thlp2, up2, vp2, wp2,           & ! intent(in)
                               sclrp2, wprtp_cl_num, wpthlp_cl_num,      & ! intent(in)
                               wpsclrp_cl_num, upwp_cl_num, vpwp_cl_num, & ! intent(in)
@@ -1747,8 +1839,22 @@ module advance_clubb_core_module
       Kmh_zm = Kh_zm * c_K10h ! Coefficient for thermo
 
       if ( l_do_expldiff_rtm_thlm ) then
-        edsclrm(:,edsclr_dim-1)=thlm(:)
-        edsclrm(:,edsclr_dim)=rtm(:)
+
+        ! Water tracers code block begins 
+        if (trace_water) then 
+            edsclrm(:,edsclr_dim-1-wtrc_nwset)=thlm(:)
+            edsclrm(:,edsclr_dim-wtrc_nwset)=rtm(:)
+            do m=1,wtrc_nwset
+                edsclrm(:,edsclr_dim-(wtrc_nwset-m))=wtrc_rtm(:,m)
+            end do
+        else
+            edsclrm(:,edsclr_dim-1)=thlm(:)
+            edsclrm(:,edsclr_dim)=rtm(:)
+        endif
+        ! Water tracers code block ends
+
+        
+
       endif
 
       call advance_windm_edsclrm( dt, wm_zt, Km_zm, Kmh_zm, ug, vg, um_ref, vm_ref, & ! intent(in)
@@ -1764,10 +1870,22 @@ module advance_clubb_core_module
         call pvertinterp(gr%nz, p_in_Pa, 70000.0_core_rknd, thlm, thlm700)
         call pvertinterp(gr%nz, p_in_Pa, 100000.0_core_rknd, thlm, thlm1000)
         if ( thlm700 - thlm1000 < 20.0_core_rknd ) then
-          thlm(:) = edsclrm(:,edsclr_dim-1)
-          rtm(:) = edsclrm(:,edsclr_dim)
+            ! Water tracers code block begins 
+            if (trace_water) then
+                thlm(:) = edsclrm(:,edsclr_dim-1-wtrc_nwset)
+                rtm(:) = edsclrm(:,edsclr_dim-wtrc_nwset)
+                do m=1,wtrc_nwset
+                  wtrc_rtm(:,m) = edsclrm(:,edsclr_dim-(wtrc_nwset-m))
+                end do
+            else
+            ! Water tracers code block ends
+                thlm(:) = edsclrm(:,edsclr_dim-1)
+                rtm(:) = edsclrm(:,edsclr_dim)
+            endif
         end if
       end if
+
+      
 
       ! Eric Raut: this seems dangerous to call without any attached flag.
       ! Hence the preprocessor.
@@ -1797,6 +1915,7 @@ module advance_clubb_core_module
        ! Given CLUBB's prognosed moments, diagnose CLUBB's PDF parameters
        !   and quantities integrated over that PDF, including
        !   quantities related to clouds, buoyancy, and turbulent advection.
+
        call pdf_closure_driver( dt, hydromet_dim, wprtp,       & ! Intent(in)
                                 thlm, wpthlp, rtp2, rtp3,      & ! Intent(in)
                                 thlp2, thlp3, rtpthlp, wp2,    & ! Intent(in)
@@ -1810,12 +1929,12 @@ module advance_clubb_core_module
                                 sclrm, wpsclrp, sclrp2,        & ! Intent(in)
                                 sclrprtp, sclrpthlp,           & ! Intent(in)
                                 l_samp_stats_in_pdf_call,      & ! Intent(in)
-                                rtm,                           & ! Intent(i/o)
+                                rtm, wtrc_rtm,                          & ! Intent(i/o)
 #ifdef GFDL
                                 RH_crit(k, : , :),             & ! Intent(i/o)
                                 do_liquid_only_in_clubb,       & ! Intent(in)
 #endif
-                                rcm, cloud_frac,               & ! Intent(out)
+                                rcm, wtrc_rcm, cloud_frac,               & ! Intent(out)
                                 ice_supersat_frac, wprcp,      & ! Intent(out)
                                 sigma_sqd_w, wpthvp, wp2thvp,  & ! Intent(out)
                                 rtpthvp, thlpthvp, rc_coef,    & ! Intent(out)
@@ -1829,7 +1948,7 @@ module advance_clubb_core_module
                                 Skw_velocity,                  & ! Intent(out)
                                 cloud_frac_zm,                 & ! Intent(out)
                                 ice_supersat_frac_zm,          & ! Intent(out)
-                                rtm_zm, thlm_zm, rcm_zm,       & ! Intent(out)
+                                rtm_zm, wtrc_rtm_zm, thlm_zm, rcm_zm, wtrc_rcm_zm,       & ! Intent(out)
                                 rcm_supersat_adj,              & ! Intent(out)
                                 wp2sclrp, wpsclrp2, sclrprcp,  & ! Intent(out)
                                 wpsclrprtp, wpsclrpthlp,       & ! Intent(out)
@@ -1837,8 +1956,44 @@ module advance_clubb_core_module
                                 pdf_params_zm,                 & ! Intent(out)
                                 pdf_implicit_coefs_terms )       ! Intent(out)
 
+
+                                do k = 1, gr%nz
+                                    if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
+                                        ! write(iulog, *) ' RCM error', wtrc_rcm(k,1), rcm(k)
+                                        ! call endrun('RCM error')
+                                    endif
+                            
+                                    if (abs( wtrc_rcm(k,1)/2. - wtrc_rcm(k,2)) .gt. 1e-12) then
+                                        ! write(iulog, *) ' RCM error', wtrc_rcm(k,1)/2., wtrc_rcm(k,2)
+                                        ! call endrun('RCM error')
+                                    endif
+                                enddo
+                        
+                                do k = 1, gr%nz
+                                    if (abs( wtrc_rcm_zm(k,1) - rcm_zm(k)) .gt. 1e-12) then
+                                        ! write(iulog, *) ' Rcm_zm error', wtrc_rcm_zm(k,1), rcm_zm(k)
+                                        ! call endrun('Rcm_zm error')
+                                    endif
+                            
+                                    if (abs( wtrc_rcm_zm(k,1)/2. - wtrc_rcm_zm(k,2)) .gt. 1e-12) then
+                                        ! write(iulog, *) ' Rcm_zm error', wtrc_rcm_zm(k,1)/2., wtrc_rcm_zm(k,2)
+                                        ! call endrun('Rcm_zm error')
+                                    endif
+                                enddo
+
     endif ! ipdf_call_placement == ipdf_post_advance_fields
           ! or ipdf_call_placement == ipdf_pre_post_advance_fields
+
+    do k = 1, gr%nz
+        if (abs( wtrc_rtm(k,1) - rtm(k)) .gt. 1e-12) then
+            ! write(iulog, *) ' RTM error', wtrc_rtm(k,1), rtm(k)
+            ! call endrun('RTM error')
+        endif
+        if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
+            ! write(iulog, *) ' RCM error', wtrc_rcm(k,1), rcm(k)
+            ! call endrun('RCM error')
+        endif
+    enddo
 
 #ifdef CLUBB_CAM
       qclvar(:) = rcp2_zt(:)
@@ -2030,12 +2185,12 @@ module advance_clubb_core_module
                                  sclrm, wpsclrp, sclrp2,        & ! Intent(in)
                                  sclrprtp, sclrpthlp,           & ! Intent(in)
                                  l_samp_stats_in_pdf_call,      & ! Intent(in)
-                                 rtm,                           & ! Intent(i/o)
+                                 rtm, wtrc_rtm,                           & ! Intent(i/o)
 #ifdef GFDL
                                  RH_crit(k, : , :),             & ! Intent(i/o)
                                  do_liquid_only_in_clubb,       & ! Intent(in)
 #endif
-                                 rcm, cloud_frac,               & ! Intent(out)
+                                 rcm, wtrc_rcm, cloud_frac,               & ! Intent(out)
                                  ice_supersat_frac, wprcp,      & ! Intent(out)
                                  sigma_sqd_w, wpthvp, wp2thvp,  & ! Intent(out)
                                  rtpthvp, thlpthvp, rc_coef,    & ! Intent(out)
@@ -2049,7 +2204,7 @@ module advance_clubb_core_module
                                  Skw_velocity,                  & ! Intent(out)
                                  cloud_frac_zm,                 & ! Intent(out)
                                  ice_supersat_frac_zm,          & ! Intent(out)
-                                 rtm_zm, thlm_zm, rcm_zm,       & ! Intent(out)
+                                 rtm_zm, wtrc_rtm_zm, thlm_zm, rcm_zm, wtrc_rcm_zm,       & ! Intent(out)
                                  rcm_supersat_adj,              & ! Intent(out)
                                  wp2sclrp, wpsclrp2, sclrprcp,  & ! Intent(out)
                                  wpsclrprtp, wpsclrpthlp,       & ! Intent(out)
@@ -2168,6 +2323,22 @@ module advance_clubb_core_module
 
     use clubb_precision, only: &
         core_rknd    ! Variable(s)
+! Water tracers code block begins 
+    use water_tracer_vars, only: &
+        wtrc_nwset,  &
+        wtrc_iatype, &
+        iwspec,      &
+        wisotope, &
+        trace_water, &
+        wtrc_iawset
+    use water_tracers, only: &
+        wtrc_ratio
+    use water_types, only: &
+        iwtvap, &
+        iwtliq
+    use wtrc_pdf_closure_module, only: &
+        wtrc_pdf_closure
+! Water tracers code block ends
 
     implicit none
 
@@ -2244,6 +2415,12 @@ module advance_clubb_core_module
     real( kind = core_rknd ), dimension(gr%nz), intent(inout) ::  &
       rtm    ! total water mixing ratio, r_t (thermo. levels) [kg/kg]
 
+    ! Water tracers code block begins 
+    !   real( kind = core_rknd ), dimension(gr%nz, wtrc_nwset) ::  & ! change intent to (inout)
+      real( kind = core_rknd ), dimension(gr%nz, wtrc_nwset), intent(inout)::  & 
+      wtrc_rtm 
+    ! Water tracers code block ends
+
 #ifdef GFDL
     ! hlg, 2010-06-16
     real( kind = core_rknd ), dimension(gr%nz, min(1,sclr_dim) , 2), intent(inout) :: &
@@ -2273,6 +2450,19 @@ module advance_clubb_core_module
       rc_coef_zm,        & ! Coefficient of X'r_c' on m-levs.       [K/(kg/kg)]
       rtm_frz,           & ! rtm adjusted to include hydrometeors   [kg/kg]
       thlm_frz             ! thlm adjusted to include hydrometeors  [K]
+
+
+    ! Water tracers code block begins 
+      real( kind = core_rknd ), dimension(gr%nz, wtrc_nwset), intent(out) ::  &
+    !   real( kind = core_rknd ), dimension(gr%nz, wtrc_nwset) ::  &
+      wtrc_rcm
+    ! Water tracers code block ends
+
+      real( kind = core_rknd ), dimension(gr%nz, wtrc_nwset)::  &
+      wtrc_rcm_frz, &
+      wtrc_rcm_frz_zm, &
+      R_vap, &
+      wtrc_rcm_in_layer
 
     ! Variable being passed back to and out of advance_clubb_core.
     real( kind = core_rknd ), dimension(gr%nz,sclr_dim), intent(out) :: &
@@ -2304,6 +2494,10 @@ module advance_clubb_core_module
       rcm_zm,               & ! rcm at momentum levels                   [kg/kg]
       rcm_supersat_adj        ! Adjust. to rcm due to spurious supersat. [kg/kg]
 
+    real( kind = core_rknd ), dimension(gr%nz, wtrc_nwset), intent(out) :: &
+      wtrc_rtm_zm,   &   ! water tracer total water mixing ratio on momentum grid [kg/kg]
+      wtrc_rcm_zm   ! water tracer liquid water mixing ratio on momentum grid [kg/kg]
+     
     real( kind = core_rknd ), dimension(gr%nz,sclr_dim), intent(out) :: &
       wp2sclrp,    & ! < w'^2 sclr' > (thermodynamic levels)      [units vary]
       wpsclrp2,    & ! < w' sclr'^2 > (thermodynamic levels)      [units vary]
@@ -2506,6 +2700,19 @@ module advance_clubb_core_module
       wpsclrpthlp_zm_frz, &
       sclrprcp_frz, &
       wp2sclrp_zm_frz
+    
+
+    ! Water tracers code block begins 
+      real( kind = core_rknd ), dimension(gr%nz,wtrc_nwset) :: &
+      wtrc_Rfix_liq,&    !For post-trap error correction -JN
+      wtrc_Rfix_vap, &
+      wtrc_rtm_old, &
+      wtrc_rcm_old
+
+    real( kind = core_rknd ), dimension(gr%nz,wtrc_nwset) :: &
+        R  !water ttacer ratio [unitless]
+    integer :: m              !loop control variable  
+  ! Water tracers code block ends
 
     real( kind = core_rknd ) :: &
       cloud_frac_1_refined, & ! cloud_frac_1 computed on refined grid
@@ -2523,6 +2730,17 @@ module advance_clubb_core_module
     logical :: l_spur_supersat   ! Spurious supersaturation?
 
     integer :: i, k
+
+    if (trace_water) then
+        wtrc_rtm_old = wtrc_rtm
+        do m = 1, wtrc_nwset
+            do k = 1, gr%nz
+                R_vap(k,m) = wtrc_ratio(iwspec(wtrc_iawset(iwtvap,m)) , wtrc_rtm_old(k,m), wtrc_rtm_old(k,1))
+            enddo
+        enddo
+    endif
+    
+
 
     !---------------------------------------------------------------------------
     ! Interpolate wp3, rtp3, and thlp3 to momentum levels, and wp2, rtp2, and
@@ -2627,12 +2845,11 @@ module advance_clubb_core_module
        wphydrometp_zt(:,i) = zm2zt( wphydrometp(:,i) )
     enddo ! i = 1, hydromet_dim, 1
 
-
-    call pdf_closure &
+    call wtrc_pdf_closure &
          ( hydromet_dim, p_in_Pa, exner, thv_ds_zt,        & ! intent(in)
            wm_zt, wp2_zt, wp3, sigma_sqd_w_zt,             & ! intent(in)
            Skw_zt, Skthl_zt, Skrt_zt,                      & ! intent(in)
-           rtm, rtp2_zt, zm2zt( wprtp ),                   & ! intent(in)
+           rtm, wtrc_rtm, rtp2_zt, zm2zt( wprtp ),                   & ! intent(in)
            thlm, thlp2_zt, zm2zt( wpthlp ),                & ! intent(in)
            um, zm2zt( up2 ), zm2zt( upwp ),                & ! intent(in)
            vm, zm2zt( vp2 ), zm2zt( vpwp ),                & ! intent(in)
@@ -2647,7 +2864,7 @@ module advance_clubb_core_module
            wp4_zt, wprtp2, wp2rtp,                         & ! intent(out)
            wpthlp2, wp2thlp, wprtpthlp,                    & ! intent(out)
            cloud_frac, ice_supersat_frac,                  & ! intent(out)
-           rcm, wpthvp_zt, wp2thvp, rtpthvp_zt,            & ! intent(out)
+           rcm, wtrc_rcm, wpthvp_zt, wp2thvp, rtpthvp_zt,            & ! intent(out)
            thlpthvp_zt, wprcp_zt, wp2rcp, rtprcp_zt,       & ! intent(out)
            thlprcp_zt, rcp2_zt,                            & ! intent(out)
            uprcp_zt, vprcp_zt,                             & ! intent(out)
@@ -2659,6 +2876,20 @@ module advance_clubb_core_module
            wpsclrprtp, wpsclrp2, sclrpthvp_zt,             & ! intent(out)
            wpsclrpthlp, sclrprcp_zt, wp2sclrp,             & ! intent(out)
            rc_coef                                         ) ! intent(out)
+
+           do k = 1, gr%nz
+            if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
+                ! write(iulog, *) ' RCM error', wtrc_rcm(k,1), rcm(k)
+                ! call endrun('RCM error')
+            endif
+        enddo
+
+        do k = 1, gr%nz
+            if (abs( wtrc_rtm(k,1) - rtm(k)) .gt. 1e-12) then
+                ! write(iulog, *) ' RtM error', wtrc_rtm(k,1), rtm(k)
+                ! call endrun('RtM error')
+            endif
+        enddo
 
     ! Subroutine may produce NaN values, and if so, return
     if ( clubb_at_least_debug_level( 0 ) ) then
@@ -2777,6 +3008,38 @@ module advance_clubb_core_module
       rtm_zm = zt2zm( rtm )
       ! Clip if extrapolation at the top level causes rtm_zm to be < rt_tol
       rtm_zm(gr%nz) = max( rtm_zm(gr%nz), rt_tol )
+
+      if (trace_water) then
+         do m = 1, wtrc_nwset
+             wtrc_rtm_zm(:,m) = zt2zm (wtrc_rtm(:,m))
+             wtrc_rtm_zm(gr%nz,m) = max( wtrc_rtm_zm(gr%nz,m), rt_tol )
+         enddo
+      endif
+
+      do k = 1, gr%nz
+        if (abs( wtrc_rtm(k,1) - rtm(k)) .gt. 1e-12) then
+            ! write(iulog, *) ' RtM error', wtrc_rtm(k,1), rtm(k)
+            ! call endrun('RtM error')
+        endif
+
+        if (abs( wtrc_rtm(k,1)/2. - wtrc_rtm(k,2)) .gt. 1e-12) then
+            ! write(iulog, *) ' RtM error', wtrc_rtm(k,1)/2., wtrc_rtm(k,2)
+            ! call endrun('RtM error')
+        endif
+    enddo
+
+    do k = 1, gr%nz
+        if (abs( wtrc_rtm_zm(k,1) - rtm_zm(k)) .gt. 1e-12) then
+            ! write(iulog, *) ' RtM_zm error', wtrc_rtm_zm(k,1), rtm_zm(k)
+            ! call endrun('RtM_zm error')
+        endif
+
+        if (abs( wtrc_rtm_zm(k,1)/2. - wtrc_rtm_zm(k,2)) .gt. 1e-12) then
+            ! write(iulog, *) ' RtM_zm error', wtrc_rtm_zm(k,1)/2., wtrc_rtm_zm(k,2)
+            ! call endrun('RtM_zm error')
+        endif
+    enddo
+
       thlm_zm = zt2zm( thlm )
       ! Clip if extrapolation at the top level causes thlm_zm to be < thl_tol
       thlm_zm(gr%nz) = max( thlm_zm(gr%nz), thl_tol )
@@ -2790,11 +3053,11 @@ module advance_clubb_core_module
 
       ! Call pdf_closure to output the variables which belong on the momentum grid.
 
-      call pdf_closure &
+      call wtrc_pdf_closure &
            ( hydromet_dim, p_in_Pa_zm, exner_zm, thv_ds_zm,        & ! intent(in)
              wm_zm, wp2, wp3_zm, sigma_sqd_w,                      & ! intent(in)
              Skw_zm, Skthl_zm, Skrt_zm,                            & ! intent(in)
-             rtm_zm, rtp2, wprtp,                                  & ! intent(in)
+             rtm_zm, wtrc_rtm_zm, rtp2, wprtp,                                  & ! intent(in)
              thlm_zm, thlp2, wpthlp,                               & ! intent(in)
              zt2zm( um ), up2, upwp,                               & ! intent(in)
              zt2zm( vm ), vp2, vpwp,                               & ! intent(in)
@@ -2809,7 +3072,7 @@ module advance_clubb_core_module
              wp4, wprtp2_zm, wp2rtp_zm,                            & ! intent(out)
              wpthlp2_zm, wp2thlp_zm, wprtpthlp_zm,                 & ! intent(out)
              cloud_frac_zm, ice_supersat_frac_zm,                  & ! intent(out)
-             rcm_zm, wpthvp, wp2thvp_zm, rtpthvp,                  & ! intent(out)
+             rcm_zm, wtrc_rcm_zm, wpthvp, wp2thvp_zm, rtpthvp,                  & ! intent(out)
              thlpthvp, wprcp, wp2rcp_zm, rtprcp,                   & ! intent(out)
              thlprcp, rcp2,                                        & ! intent(out)
              uprcp, vprcp,                                         & ! intent(out)
@@ -2821,6 +3084,31 @@ module advance_clubb_core_module
              wpsclrprtp_zm, wpsclrp2_zm, sclrpthvp,                & ! intent(out)
              wpsclrpthlp_zm, sclrprcp, wp2sclrp_zm,                & ! intent(out)
              rc_coef_zm                                            ) ! intent(out)
+
+
+             do k = 1, gr%nz
+                if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
+                    ! write(iulog, *) ' RCM error', wtrc_rcm(k,1), rcm(k)
+                    ! call endrun('RCM error')
+                endif
+        
+                if (abs( wtrc_rcm(k,1)/2. - wtrc_rcm(k,2)) .gt. 1e-12) then
+                    ! write(iulog, *) ' RCM error', wtrc_rcm(k,1)/2., wtrc_rcm(k,2)
+                    ! call endrun('RCM error')
+                endif
+            enddo
+
+            do k = 1, gr%nz
+                if (abs( wtrc_rcm_zm(k,1) - rcm_zm(k)) .gt. 1e-12) then
+                    ! write(iulog, *) ' RCM_zm error', wtrc_rcm_zm(k,1), rcm_zm(k)
+                    ! call endrun('RCM_zm error')
+                endif
+        
+                if (abs( wtrc_rcm_zm(k,1)/2. - wtrc_rcm_zm(k,2)) .gt. 1e-12) then
+                    ! write(iulog, *) ' RCM_zm error', wtrc_rcm_zm(k,1)/2., wtrc_rcm_zm(k,2)
+                    ! call endrun('RCM_zm error')
+                endif
+            enddo
 
       ! Subroutine may produce NaN values, and if so, return
       if ( clubb_at_least_debug_level( 0 ) ) then
@@ -2884,6 +3172,9 @@ module advance_clubb_core_module
       rtm_zm = 0.0_core_rknd
       thlm_zm = 0.0_core_rknd
 
+      wtrc_rtm_zm = 0.0_core_rknd
+      wtrc_rcm_zm = 0.0_core_rknd
+
       ! Interpolate passive scalars back onto the m grid
       do i = 1, sclr_dim
         sclrpthvp(:,i)       = zt2zm( sclrpthvp_zt(:,i) )
@@ -2897,16 +3188,53 @@ module advance_clubb_core_module
     ! If l_trapezoidal_rule_zt is true, call trapezoidal_rule_zt for
     ! thermodynamic-level variables output from pdf_closure.
     ! ldgrant June 2009
+
+    do k = 1, gr%nz
+        if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
+            ! write(iulog, *) ' RCM error', wtrc_rcm(k,1), rcm(k)
+            ! call endrun('RCM error')
+        endif
+
+        if (abs( wtrc_rcm(k,1)/2. - wtrc_rcm(k,2)) .gt. 1e-12) then
+            ! write(iulog, *) ' RCM error', wtrc_rcm(k,1)/2., wtrc_rcm(k,2)
+            ! call endrun('RCM error')
+        endif
+    enddo
+
+
+    do k = 1, gr%nz
+        if (abs( wtrc_rcm_zm(k,1) - rcm_zm(k)) .gt. 1e-12) then
+            ! write(iulog, *) ' RCM_zm error', wtrc_rcm_zm(k,1), rcm_zm(k)
+            ! call endrun('RCM_zm error')
+        endif
+
+        if (abs( wtrc_rcm_zm(k,1)/2. - wtrc_rcm_zm(k,2)) .gt. 1e-12) then
+            ! write(iulog, *) ' RCM_zm error', wtrc_rcm_zm(k,1)/2., wtrc_rcm_zm(k,2)
+            ! call endrun('RCM_zm error')
+        endif
+    enddo
+
+    do k = 1, gr%nz
+        if (abs( wtrc_rtm_zm(k,1) - rtm_zm(k)) .gt. 1e-12) then
+            ! write(iulog, *) ' rtm_zm error', wtrc_rtm_zm(k,1), rtm_zm(k)
+            ! call endrun('rtm_zm error')
+        endif
+
+        if (abs( wtrc_rtm_zm(k,1)/2. - wtrc_rtm_zm(k,2)) .gt. 1e-12) then
+            ! write(iulog, *) ' rtm_zm error', wtrc_rtm_zm(k,1)/2., wtrc_rtm_zm(k,2)
+            ! call endrun('rtm_zm error')
+        endif
+    enddo
     if ( l_trapezoidal_rule_zt ) then
       call trapezoidal_rule_zt &
            ( l_call_pdf_closure_twice,                    & ! intent(in)
              wprtp2, wpthlp2,                             & ! intent(inout)
              wprtpthlp, cloud_frac, ice_supersat_frac,    & ! intent(inout)
-             rcm, wp2thvp, wpsclrprtp, wpsclrp2,          & ! intent(inout)
+             rcm, wtrc_rcm, wp2thvp, wpsclrprtp, wpsclrp2,          & ! intent(inout)
              wpsclrpthlp, pdf_params,                     & ! intent(inout)
              wprtp2_zm, wpthlp2_zm,                       & ! intent(inout)
              wprtpthlp_zm, cloud_frac_zm,                 & ! intent(inout)
-             ice_supersat_frac_zm, rcm_zm, wp2thvp_zm,    & ! intent(inout)
+             ice_supersat_frac_zm, rcm_zm, wtrc_rcm_zm, wp2thvp_zm,    & ! intent(inout)
              wpsclrprtp_zm, wpsclrp2_zm, wpsclrpthlp_zm,  & ! intent(inout)
              pdf_params_zm )                                ! intent(inout)
     end if ! l_trapezoidal_rule_zt
@@ -2929,18 +3257,62 @@ module advance_clubb_core_module
     call clip_rcm( rtm, 'rtm < rcm after pdf_closure', & ! intent (in)
                    rcm )                                 ! intent (inout)
 
+
+    wtrc_rcm_old = wtrc_rcm
+
+    if (trace_water) then
+        wtrc_rcm(:,1) = rcm
+         do m = 2, wtrc_nwset
+            do k = 1, gr%nz
+                wtrc_rcm(k,m) = wtrc_ratio(iwspec(wtrc_iawset(iwtliq,m)) , wtrc_rcm_old(k,m), wtrc_rcm_old(k,1)) * (wtrc_rcm(k,1) - wtrc_rcm_old(k,1)) + wtrc_rcm_old(k,m)
+            enddo
+         enddo
+         wtrc_rcm_old = wtrc_rcm
+    endif
+
+    do k = 1, gr%nz
+        if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
+            ! write(iulog, *) ' RCM total error', wtrc_rcm(k,1), rcm(k)
+            ! call endrun('RCM total error')
+        endif
+        if (abs( wtrc_rcm(k,2) - wtrc_rcm(k,1)/2.) .gt. 1e-8) then
+            ! write(iulog, *) ' RCM error', wtrc_rcm(k,2), wtrc_rcm(k,1)/2.
+            ! call endrun('RCM error')
+        endif
+    enddo
+
+! insert wtrc_rcm change here
+
     ! Compute variables cloud_cover and rcm_in_layer.
     ! Added July 2009
     call compute_cloud_cover &
-       ( pdf_params, cloud_frac, rcm, & ! intent(in)
-         cloud_cover, rcm_in_layer )    ! intent(out)
+       ( pdf_params, cloud_frac, rcm, wtrc_rcm, & ! intent(in)
+         cloud_cover, rcm_in_layer, wtrc_rcm_in_layer )    ! intent(out)
 
     ! Use cloud_cover and rcm_in_layer to help boost cloud_frac and rcm to help
     ! increase cloudiness at coarser grid resolutions.
-    if ( l_use_cloud_cover ) then
+    if ( l_use_cloud_cover ) then ! Appears to be set to true - AA
       cloud_frac = cloud_cover
       rcm = rcm_in_layer
+      if (trace_water) then
+         do m = 1, wtrc_nwset
+             wtrc_rcm(:,m) = wtrc_rcm_in_layer(:,m)
+         enddo
+      endif
     end if
+
+    do k = 1, gr%nz
+        if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
+            ! write(iulog, *) ' RCM error', wtrc_rcm(k,1), rcm(k)
+            ! call endrun('RCM error')
+        endif
+
+        if (abs( wtrc_rcm(k,1)/2. - wtrc_rcm(k,2)) .gt. 1e-12) then
+            ! write(iulog, *) ' RCM error', wtrc_rcm(k,1)/2., wtrc_rcm(k,2)
+            ! call endrun('RCM error')
+        endif
+    enddo
+
 
     ! Clip cloud fraction here if it still exceeds 1.0 due to round off
     cloud_frac = min( 1.0_core_rknd, cloud_frac )
@@ -3075,17 +3447,17 @@ module advance_clubb_core_module
         rtpthvp_frz(gr%nz)  = 0.0_core_rknd
 
       end if ! l_call_pdf_closure_twice
-
+      wtrc_rcm_frz = wtrc_rcm ! dummy variable
       if ( l_trapezoidal_rule_zt ) then
         call trapezoidal_rule_zt &
            ( l_call_pdf_closure_twice,                                & ! intent(in)
              wprtp2_frz, wpthlp2_frz,                                 & ! intent(inout)
              wprtpthlp_frz, cloud_frac_frz, ice_supersat_frac_frz,    & ! intent(inout)
-             rcm_frz, wp2thvp_frz, wpsclrprtp_frz, wpsclrp2_frz,      & ! intent(inout)
+             rcm_frz, wtrc_rcm_frz, wp2thvp_frz, wpsclrprtp_frz, wpsclrp2_frz,      & ! intent(inout)
              wpsclrpthlp_frz, pdf_params_frz,                         & ! intent(inout)
              wprtp2_zm_frz, wpthlp2_zm_frz,                           & ! intent(inout)
              wprtpthlp_zm_frz, cloud_frac_zm_frz,                     & ! intent(inout)
-             ice_supersat_frac_zm_frz, rcm_zm_frz, wp2thvp_zm_frz,    & ! intent(inout)
+             ice_supersat_frac_zm_frz, rcm_zm_frz, wtrc_rcm_frz, wp2thvp_zm_frz,    & ! intent(inout)
              wpsclrprtp_zm_frz, wpsclrp2_zm_frz, wpsclrpthlp_zm_frz,  & ! intent(inout)
              pdf_params_zm_frz                                        ) ! intent(inout)
       end if ! l_trapezoidal_rule_zt
@@ -3110,6 +3482,18 @@ module advance_clubb_core_module
       rel_humidity = (rtm - rcm) / rsat
 
       rcm_supersat_adj = zero
+
+      do k = 1, gr%nz
+        if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
+            ! write(iulog, *) ' RCM error', wtrc_rcm(k,1), rcm(k)
+            ! call endrun('RCM error')
+        endif
+
+        if (abs( wtrc_rcm(k,1)/2. - wtrc_rcm(k,2)) .gt. 1e-12) then
+            ! write(iulog, *) ' RCM error', wtrc_rcm(k,1)/2., wtrc_rcm(k,2)
+            ! call endrun('RCM error')
+        endif
+    enddo
       if ( l_rcm_supersat_adj ) then
         ! +PAB mods, take remaining supersaturation that may exist
         !   after CLUBB PDF call and add it to rcm.  Supersaturation
@@ -3121,6 +3505,13 @@ module advance_clubb_core_module
             rcm_supersat_adj(k) = (rtm(k) - rcm(k)) - rsat(k)
             rcm(k) = rcm(k) + rcm_supersat_adj(k)
             l_spur_supersat = .true.
+
+            if (trace_water) then
+                 do m = 1, wtrc_nwset
+                     R(k,m) = wtrc_ratio(iwspec(wtrc_iawset(iwtliq,m)) , wtrc_rcm_old(k,m), wtrc_rcm_old(k,1))
+                     wtrc_rcm(k,m) = wtrc_rcm(k,m) + R(k,m) * rcm_supersat_adj(k)
+                 enddo
+            endif
           end if
         enddo
 
@@ -3129,6 +3520,18 @@ module advance_clubb_core_module
         end if
 
       end if ! l_rcm_supersat_adj
+
+      do k = 1, gr%nz
+        if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
+            ! write(iulog, *) ' RCM error', wtrc_rcm(k,1), rcm(k)
+            ! call endrun('RCM error')
+        endif
+
+        if (abs( wtrc_rcm(k,1)/2. - wtrc_rcm(k,2)) .gt. 1e-12) then
+            ! write(iulog, *) ' RCM error', wtrc_rcm(k,1)/2., wtrc_rcm(k,2)
+            ! call endrun('RCM error')
+        endif
+    enddo
 
 
     return
@@ -3642,11 +4045,11 @@ module advance_clubb_core_module
                ( l_call_pdf_closure_twice,                    & ! intent(in)
                  wprtp2, wpthlp2,                             & ! intent(inout)
                  wprtpthlp, cloud_frac, ice_supersat_frac,    & ! intent(inout)
-                 rcm, wp2thvp, wpsclrprtp, wpsclrp2,          & ! intent(inout)
+                 rcm, wtrc_rcm, wp2thvp, wpsclrprtp, wpsclrp2,          & ! intent(inout)
                  wpsclrpthlp, pdf_params,                     & ! intent(inout)
                  wprtp2_zm, wpthlp2_zm,                       & ! intent(inout)
                  wprtpthlp_zm, cloud_frac_zm,                 & ! intent(inout)
-                 ice_supersat_frac_zm, rcm_zm, wp2thvp_zm,    & ! intent(inout)
+                 ice_supersat_frac_zm, rcm_zm, wtrc_rcm_zm, wp2thvp_zm,    & ! intent(inout)
                  wpsclrprtp_zm, wpsclrp2_zm, wpsclrpthlp_zm,  & ! intent(inout)
                  pdf_params_zm )                                ! intent(inout)
       !
@@ -3697,6 +4100,10 @@ module advance_clubb_core_module
       use clubb_precision, only: &
           core_rknd ! Variable(s)
 
+    use water_tracer_vars, only: &
+    trace_water, &
+    wtrc_nwset
+
       implicit none
 
       ! Constant parameters
@@ -3708,6 +4115,12 @@ module advance_clubb_core_module
 
       ! Input/Output variables
       ! Thermodynamic level variables output from the first call to pdf_closure
+    real( kind = core_rknd ), dimension(gr%nz, wtrc_nwset), intent(inout) :: &
+        wtrc_rcm, &
+        wtrc_rcm_zm
+
+    integer :: m 
+
       real( kind = core_rknd ), dimension(gr%nz), intent(inout) :: &
         wprtp2,             & ! w'rt'^2                   [m kg^2/kg^2]
         wpthlp2,            & ! w'thl'^2                  [m K^2/s]
@@ -3830,7 +4243,7 @@ module advance_clubb_core_module
         alpha_rt_zm,       & ! Factor relating to normalized variance for r_t           [-]
         alpha_rt_zt          ! Factor relating to normalized variance for r_t           [-]
 
-      integer :: i
+      integer :: i,k
 
       !----------------------- Begin Code -----------------------------
 
@@ -3930,6 +4343,28 @@ module advance_clubb_core_module
           alpha_rt_zm       = pdf_params_zm%alpha_rt
         end if
 
+    !     if (trace_water) then
+    !         do m = 1, wtrc_nwset
+    !             wtrc_rcm_zm(:,m) = zt2zm( wtrc_rcm(:,m) )
+    !             wtrc_rcm_zm(gr%nz, m) = 0.0_core_rknd
+    !         enddo
+    !    endif
+
+       do k = 1, gr%nz
+        if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
+        !   write(iulog, *) ' RCM total error', wtrc_rcm(k,1), rcm(k)
+        !   call endrun('RCM  total error')
+      endif
+      if (abs( wtrc_rcm(k,2) - wtrc_rcm(k,1)/2.) .gt. 1e-8) then
+        !   write(iulog, *) ' RCM error', wtrc_rcm(k,2), wtrc_rcm(k,1)/2.
+        !   call endrun('RCM error')
+      endif
+      if (abs( wtrc_rcm_zm(k,1) - rcm_zm(k)) .gt. 1e-12) then
+        ! write(iulog, *) ' RCM_zm total error', wtrc_rcm_zm(k,1), rcm_zm(k), wtrc_rcm(k,1), rcm(k)
+        ! call endrun('RCM_zm  total error')
+    endif
+  enddo
+
       else
 
         ! Interpolate thermodynamic variables to the momentum grid.
@@ -3949,6 +4384,41 @@ module advance_clubb_core_module
         rcm_zm(gr%nz)        = 0.0_core_rknd
         wp2thvp_zm             = zt2zm( wp2thvp )
         wp2thvp_zm(gr%nz)    = 0.0_core_rknd
+        ! wtrc_rcm_zm = 0.0_core_rknd
+        do k = 1, gr%nz
+            if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
+            !   write(iulog, *) ' RCM total error', wtrc_rcm(k,1), rcm(k)
+            !   call endrun('RCM  total error')
+          endif
+          if (abs( wtrc_rcm(k,2) - wtrc_rcm(k,1)/2.) .gt. 1e-8) then
+            !   write(iulog, *) ' RCM error', wtrc_rcm(k,2), wtrc_rcm(k,1)/2.
+            !   call endrun('RCM error')
+          endif
+      enddo
+
+        
+
+        if (trace_water) then
+             do m = 1, wtrc_nwset
+                 wtrc_rcm_zm(:,m) = zt2zm( wtrc_rcm(:,m) )
+                 wtrc_rcm_zm(gr%nz, m) = 0.0_core_rknd
+             enddo
+        endif
+
+        do k = 1, gr%nz
+            if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
+            !   write(iulog, *) ' RCM total error', wtrc_rcm(k,1), rcm(k)
+            !   call endrun('RCM  total error')
+          endif
+          if (abs( wtrc_rcm(k,2) - wtrc_rcm(k,1)/2.) .gt. 1e-8) then
+            !   write(iulog, *) ' RCM error', wtrc_rcm(k,2), wtrc_rcm(k,1)/2.
+            !   call endrun('RCM error')
+          endif
+          if (abs( wtrc_rcm_zm(k,1) - rcm_zm(k)) .gt. 1e-12) then
+            ! write(iulog, *) ' RCM_zm total error', wtrc_rcm_zm(k,1), rcm_zm(k), wtrc_rcm(k,1), rcm(k)
+            ! call endrun('RCM_zm  total error')
+        endif
+      enddo
 
         do i = 1, sclr_dim
           wpsclrprtp_zm(:,i)        = zt2zm( wpsclrprtp(:,i) )
@@ -4064,7 +4534,48 @@ module advance_clubb_core_module
 
       cloud_frac = trapezoid_zt( cloud_frac, cloud_frac_zm )
       ice_supersat_frac = trapezoid_zt( ice_supersat_frac, ice_supersat_frac_zm )
+
+do k = 1, gr%nz
+      if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
+        ! write(iulog, *) ' RCM total error', wtrc_rcm(k,1), rcm(k)
+        ! call endrun('RCM  total error')
+    endif
+    if (abs( wtrc_rcm_zm(k,1) - rcm_zm(k)) .gt. 1e-12) then
+        ! write(iulog, *) ' RCM_zm total error', wtrc_rcm_zm(k,1), rcm_zm(k), wtrc_rcm(k,1), rcm(k)
+        ! call endrun('RCM_zm  total error')
+    endif
+    if (abs( wtrc_rcm(k,2) - wtrc_rcm(k,1)/2.) .gt. 1e-8) then
+        ! write(iulog, *) ' RCM error', wtrc_rcm(k,2), wtrc_rcm(k,1)/2.
+        ! call endrun('RCM error')
+    endif
+    if (abs( wtrc_rcm_zm(k,2) - wtrc_rcm_zm(k,1)/2.) .gt. 1e-8) then
+        ! write(iulog, *) ' RCM error', wtrc_rcm_zm(k,2), wtrc_rcm_zm(k,1)/2.
+        ! call endrun('RCM error')
+    endif
+enddo
       rcm        = trapezoid_zt( rcm, rcm_zm )
+      if (trace_water) then
+         do m = 1, wtrc_nwset
+             wtrc_rcm(:,m) = trapezoid_zt(wtrc_rcm(:,m), wtrc_rcm_zm(:,m))
+         enddo
+      endif
+
+      do k = 1, gr%nz
+        if (abs( wtrc_rcm_zm(k,1) - rcm_zm(k)) .gt. 1e-12) then
+        !   write(iulog, *) ' RCM_zm total error', wtrc_rcm_zm(k,1), rcm_zm(k)
+        !   call endrun('RCM_zm  total error')
+      endif
+      if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
+        ! write(iulog, *) ' RCM total error', wtrc_rcm(k,1), rcm(k)
+        ! call endrun('RCM  total error')
+    endif
+      if (abs( wtrc_rcm(k,2) - wtrc_rcm(k,1)/2.) .gt. 1e-8) then
+        !   write(iulog, *) ' RCM error', wtrc_rcm(k,2), wtrc_rcm(k,1)/2.
+        !   call endrun('RCM error')
+      endif
+  enddo
+
+      
 
       wp2thvp    = trapezoid_zt( wp2thvp, wp2thvp_zm )
 
@@ -4128,7 +4639,7 @@ module advance_clubb_core_module
     subroutine trapezoidal_rule_zm &
                ( wpthvp_zt, thlpthvp_zt, rtpthvp_zt, & ! intent(in)
                  wpthvp, thlpthvp, rtpthvp )           ! intent(inout)
-      !
+                 !
       ! Description:
       !   This subroutine recomputes three variables on the
       !   momentum grid from pdf_closure -- wpthvp, thlpthvp, and
@@ -4200,7 +4711,7 @@ module advance_clubb_core_module
         variable_zm    ! Variable on the zm grid
 
       ! Result
-      real( kind = core_rknd ), dimension(gr%nz) :: trapezoid_zt
+      real( kind = core_rknd ), dimension(gr%nz) :: trapezoid_zt 
 
       ! Local Variable
       integer :: k ! Loop index
@@ -4271,177 +4782,268 @@ module advance_clubb_core_module
 
     !-----------------------------------------------------------------------
     subroutine compute_cloud_cover &
-             ( pdf_params, cloud_frac, rcm, & ! intent(in)
-               cloud_cover, rcm_in_layer )    ! intent(out)
-      !
-      ! Description:
-      !   Subroutine to compute cloud cover (the amount of sky
-      !   covered by cloud) and rcm in layer (liquid water mixing ratio in
-      !   the portion of the grid box filled by cloud).
-      !
-      ! References:
-      !   Definition of 's' comes from:
-      !   ``The Gaussian Cloud Model Relations'' G. L. Mellor (1977)
-      !   JAS, Vol. 34, pp. 356--358.
-      !
-      ! Notes:
-      !   Added July 2009
-      !---------------------------------------------------------------------
+        ( pdf_params, cloud_frac, rcm, wtrc_rcm, & ! intent(in)
+          cloud_cover, rcm_in_layer, wtrc_rcm_in_layer )    ! intent(out)
+ !
+ ! Description:
+ !   Subroutine to compute cloud cover (the amount of sky
+ !   covered by cloud) and rcm in layer (liquid water mixing ratio in
+ !   the portion of the grid box filled by cloud).
+ !
+ ! References:
+ !   Definition of 's' comes from:
+ !   ``The Gaussian Cloud Model Relations'' G. L. Mellor (1977)
+ !   JAS, Vol. 34, pp. 356--358.
+ !
+ ! Notes:
+ !   Added July 2009
+ !---------------------------------------------------------------------
 
-      use constants_clubb, only: &
-          rc_tol, & ! Variable(s)
-          fstderr
+ use constants_clubb, only: &
+     rc_tol, & ! Variable(s)
+     fstderr
 
-      use grid_class, only: gr ! Variable
+ use grid_class, only: gr ! Variable
 
-      use pdf_parameter_module, only: &
-          pdf_parameter ! Derived data type
+ use pdf_parameter_module, only: &
+     pdf_parameter ! Derived data type
 
-      use clubb_precision, only: &
-          core_rknd ! Variable(s)
+ use clubb_precision, only: &
+     core_rknd ! Variable(s)
 
-      use error_code, only: &
-          clubb_at_least_debug_level  ! Procedure
+ use error_code, only: &
+     clubb_at_least_debug_level  ! Procedure
 
-      implicit none
+! Water tracers code block begins 
+use water_tracer_vars, only: &
+   wtrc_nwset, &
+   trace_water
+! Water tracers code block ends
 
-      ! External functions
-      intrinsic :: abs, min, max
+ implicit none
 
-      ! Input variables
-      real( kind = core_rknd ), dimension(gr%nz), intent(in) :: &
-        cloud_frac, & ! Cloud fraction             [-]
-        rcm           ! Liquid water mixing ratio  [kg/kg]
+ ! External functions
+ intrinsic :: abs, min, max
 
-      type (pdf_parameter), intent(in) :: &
-        pdf_params    ! PDF Parameters  [units vary]
+ ! Input variables
+ real( kind = core_rknd ), dimension(gr%nz), intent(in) :: &
+   cloud_frac, & ! Cloud fraction             [-]
+   rcm           ! Liquid water mixing ratio  [kg/kg]
 
-      ! Output variables
-      real( kind = core_rknd ), dimension(gr%nz), intent(out) :: &
-        cloud_cover,  & ! Cloud cover                               [-]
-        rcm_in_layer    ! Liquid water mixing ratio in cloud layer  [kg/kg]
+! Water tracers code block begins 
+ real( kind = core_rknd ), dimension(gr%nz, wtrc_nwset), intent(in) :: &
+   wtrc_rcm           ! Liquid water tracer mixing ratio  [kg/kg]
+! Water tracers code block ends
 
-      ! Local variables
-      real( kind = core_rknd ), dimension(gr%nz) :: &
-        chi_mean,                & ! Mean extended cloud water mixing ratio of the
-    !                            two Gaussian distributions
-        vert_cloud_frac_upper, & ! Fraction of cloud in top half of grid box
-        vert_cloud_frac_lower, & ! Fraction of cloud in bottom half of grid box
-        vert_cloud_frac          ! Fraction of cloud filling the grid box in the vertical
+ type (pdf_parameter), intent(in) :: &
+   pdf_params    ! PDF Parameters  [units vary]
 
-      integer :: k
+ ! Output variables
+ real( kind = core_rknd ), dimension(gr%nz), intent(out) :: &
+   cloud_cover,  & ! Cloud cover                               [-]
+   rcm_in_layer    ! Liquid water mixing ratio in cloud layer  [kg/kg]
+   
+! Water tracers code block begins 
+ real( kind = core_rknd ), dimension(gr%nz, wtrc_nwset), intent(out) :: &
+   wtrc_rcm_in_layer ! Liquid water tracer mixing ratio in cloud layer  [kg/kg]
+! Water tracers code block ends
 
-      ! ------------ Begin code ---------------
+ ! Local variables
+ real( kind = core_rknd ), dimension(gr%nz) :: &
+   chi_mean,                & ! Mean extended cloud water mixing ratio of the
+!                            two Gaussian distributions
+   vert_cloud_frac_upper, & ! Fraction of cloud in top half of grid box
+   vert_cloud_frac_lower, & ! Fraction of cloud in bottom half of grid box
+   vert_cloud_frac          ! Fraction of cloud filling the grid box in the vertical
 
-      do k = 1, gr%nz
+ integer :: k
 
-        chi_mean(k) =      pdf_params%mixt_frac(k)  * pdf_params%chi_1(k) + &
-                    (1.0_core_rknd-pdf_params%mixt_frac(k)) * pdf_params%chi_2(k)
+ ! Water tracers code block begins 
+ integer :: m
+ ! Water tracers code block ends
 
-      end do
+ ! ------------ Begin code ---------------
 
-      do k = 2, gr%nz-1, 1
+ do k = 1, gr%nz
 
-        if ( rcm(k) < rc_tol ) then ! No cloud at this level
+    if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
+        ! write(iulog, *) ' RCM total error', wtrc_rcm(k,1), rcm(k)
+        ! call endrun('RCM  total error')
+    endif
+    if (abs( wtrc_rcm(k,2) - wtrc_rcm(k,1)/2.) .gt. 1e-8) then
+        ! write(iulog, *) ' RCM error', wtrc_rcm(k,2), wtrc_rcm(k,1)/2.
+        ! call endrun('RCM error')
+    endif
 
-          cloud_cover(k)  = cloud_frac(k)
-          rcm_in_layer(k) = rcm(k)
+   chi_mean(k) =      pdf_params%mixt_frac(k)  * pdf_params%chi_1(k) + &
+               (1.0_core_rknd-pdf_params%mixt_frac(k)) * pdf_params%chi_2(k)
 
-        else if ( ( rcm(k+1) >= rc_tol ) .and. ( rcm(k-1) >= rc_tol ) ) then
-          ! There is cloud above and below,
-          !   so assume cloud fills grid box from top to bottom
+ end do
 
-          cloud_cover(k) = cloud_frac(k)
-          rcm_in_layer(k) = rcm(k)
+ do k = 2, gr%nz-1, 1
 
-        else if ( ( rcm(k+1) < rc_tol ) .or. ( rcm(k-1) < rc_tol) ) then
-          ! Cloud may fail to reach gridbox top or base or both
+   if ( rcm(k) < rc_tol ) then ! No cloud at this level
 
-          ! First let the cloud fill the entire grid box, then overwrite
-          ! vert_cloud_frac_upper(k) and/or vert_cloud_frac_lower(k)
-          ! for a cloud top, cloud base, or one-point cloud.
-          vert_cloud_frac_upper(k) = 0.5_core_rknd
-          vert_cloud_frac_lower(k) = 0.5_core_rknd
+     cloud_cover(k)  = cloud_frac(k)
+     rcm_in_layer(k) = rcm(k)
 
-          if ( rcm(k+1) < rc_tol ) then ! Cloud top
+     ! Water tracers code block begins 
+     if (trace_water) then
+        do m = 1, wtrc_nwset
+            wtrc_rcm_in_layer(k,m) = wtrc_rcm(k,m)
+        enddo
+     endif
 
-            vert_cloud_frac_upper(k) = &
-                     ( ( 0.5_core_rknd / gr%invrs_dzm(k) ) / ( gr%zm(k) - gr%zt(k) ) ) &
-                     * ( rcm(k) / ( rcm(k) + abs( chi_mean(k+1) ) ) )
+     if (abs( wtrc_rcm_in_layer(k,1) - rcm_in_layer(k)) .gt. 1e-12) then
+        ! write(iulog, *) ' RCM_in_layer total error', wtrc_rcm_in_layer(k,1), rcm_in_layer(k)
+        ! call endrun('RCM_in_layer  total error')
+    endif
+    if (abs( wtrc_rcm_in_layer(k,2) - wtrc_rcm_in_layer(k,1)/2.) .gt. 1e-8) then
+        ! write(iulog, *) ' RCM_in_layer error', wtrc_rcm_in_layer(k,2), wtrc_rcm_in_layer(k,1)/2.
+        ! call endrun('RCM_in_layer error')
+    endif
+     ! Water tracers code block ends
 
-            vert_cloud_frac_upper(k) = min( 0.5_core_rknd, vert_cloud_frac_upper(k) )
+   else if ( ( rcm(k+1) >= rc_tol ) .and. ( rcm(k-1) >= rc_tol ) ) then
+     ! There is cloud above and below,
+     !   so assume cloud fills grid box from top to bottom
 
-            ! Make the transition in cloudiness more gradual than using
-            ! the above min statement alone.
-            vert_cloud_frac_upper(k) = vert_cloud_frac_upper(k) + &
-              ( ( rcm(k+1)/rc_tol )*( 0.5_core_rknd -vert_cloud_frac_upper(k) ) )
+     cloud_cover(k) = cloud_frac(k)
+     rcm_in_layer(k) = rcm(k)
+     
+     ! Water tracers code block begins 
+     if (trace_water) then
+        do m = 1, wtrc_nwset
+            wtrc_rcm_in_layer(k,m) = wtrc_rcm(k,m)
+        enddo
+     endif
 
-          else
+     if (abs( wtrc_rcm_in_layer(k,1) - rcm_in_layer(k)) .gt. 1e-12) then
+        ! write(iulog, *) ' RCM_in_layer error', wtrc_rcm_in_layer(k,1), rcm_in_layer(k)
+        ! call endrun('RCM_in_layer error')
+    endif
+    if (abs( wtrc_rcm_in_layer(k,2) - wtrc_rcm_in_layer(k,1)/2.) .gt. 1e-8) then
+        ! write(iulog, *) ' RCM_in_layer error', wtrc_rcm_in_layer(k,2), wtrc_rcm_in_layer(k,1)/2.
+        ! call endrun('RCM_in_layer error')
+    endif
+     ! Water tracers code block ends
 
-            vert_cloud_frac_upper(k) = 0.5_core_rknd
+   else if ( ( rcm(k+1) < rc_tol ) .or. ( rcm(k-1) < rc_tol) ) then
+     ! Cloud may fail to reach gridbox top or base or both
 
-          end if
+     ! First let the cloud fill the entire grid box, then overwrite
+     ! vert_cloud_frac_upper(k) and/or vert_cloud_frac_lower(k)
+     ! for a cloud top, cloud base, or one-point cloud.
+     vert_cloud_frac_upper(k) = 0.5_core_rknd
+     vert_cloud_frac_lower(k) = 0.5_core_rknd
 
-          if ( rcm(k-1) < rc_tol ) then ! Cloud base
+     if ( rcm(k+1) < rc_tol ) then ! Cloud top
 
-            vert_cloud_frac_lower(k) = &
-                     ( ( 0.5_core_rknd / gr%invrs_dzm(k-1) ) / ( gr%zt(k) - gr%zm(k-1) ) ) &
-                     * ( rcm(k) / ( rcm(k) + abs( chi_mean(k-1) ) ) )
+       vert_cloud_frac_upper(k) = &
+                ( ( 0.5_core_rknd / gr%invrs_dzm(k) ) / ( gr%zm(k) - gr%zt(k) ) ) &
+                * ( rcm(k) / ( rcm(k) + abs( chi_mean(k+1) ) ) )
 
-            vert_cloud_frac_lower(k) = min( 0.5_core_rknd, vert_cloud_frac_lower(k) )
+       vert_cloud_frac_upper(k) = min( 0.5_core_rknd, vert_cloud_frac_upper(k) )
 
-            ! Make the transition in cloudiness more gradual than using
-            ! the above min statement alone.
-            vert_cloud_frac_lower(k) = vert_cloud_frac_lower(k) + &
-              ( ( rcm(k-1)/rc_tol )*( 0.5_core_rknd -vert_cloud_frac_lower(k) ) )
+       ! Make the transition in cloudiness more gradual than using
+       ! the above min statement alone.
+       vert_cloud_frac_upper(k) = vert_cloud_frac_upper(k) + &
+         ( ( rcm(k+1)/rc_tol )*( 0.5_core_rknd -vert_cloud_frac_upper(k) ) )
 
-          else
+     else
 
-            vert_cloud_frac_lower(k) = 0.5_core_rknd
+       vert_cloud_frac_upper(k) = 0.5_core_rknd
 
-          end if
+     end if
 
-          vert_cloud_frac(k) = &
-            vert_cloud_frac_upper(k) + vert_cloud_frac_lower(k)
+     if ( rcm(k-1) < rc_tol ) then ! Cloud base
 
-          vert_cloud_frac(k) = &
-            max( cloud_frac(k), min( 1.0_core_rknd, vert_cloud_frac(k) ) )
+       vert_cloud_frac_lower(k) = &
+                ( ( 0.5_core_rknd / gr%invrs_dzm(k-1) ) / ( gr%zt(k) - gr%zm(k-1) ) ) &
+                * ( rcm(k) / ( rcm(k) + abs( chi_mean(k-1) ) ) )
 
-          cloud_cover(k)  = cloud_frac(k) / vert_cloud_frac(k)
-          rcm_in_layer(k) = rcm(k) / vert_cloud_frac(k)
+       vert_cloud_frac_lower(k) = min( 0.5_core_rknd, vert_cloud_frac_lower(k) )
 
-        else
+       ! Make the transition in cloudiness more gradual than using
+       ! the above min statement alone.
+       vert_cloud_frac_lower(k) = vert_cloud_frac_lower(k) + &
+         ( ( rcm(k-1)/rc_tol )*( 0.5_core_rknd -vert_cloud_frac_lower(k) ) )
 
-          if ( clubb_at_least_debug_level( 0 ) ) then
+     else
 
-            write(fstderr,*)  &
-               "Error: Should not arrive here in computation of cloud_cover"
+       vert_cloud_frac_lower(k) = 0.5_core_rknd
 
-            write(fstderr,*) "At grid level k = ", k
-            write(fstderr,*) "pdf_params(k)%mixt_frac = ", pdf_params%mixt_frac(k)
-            write(fstderr,*) "pdf_params(k)%chi_1 = ", pdf_params%chi_1(k)
-            write(fstderr,*) "pdf_params(k)%chi_2 = ", pdf_params%chi_2(k)
-            write(fstderr,*) "cloud_frac(k) = ", cloud_frac(k)
-            write(fstderr,*) "rcm(k) = ", rcm(k)
-            write(fstderr,*) "rcm(k+1) = ", rcm(k+1)
-            write(fstderr,*) "rcm(k-1) = ", rcm(k-1)
+     end if
 
-            return
+     vert_cloud_frac(k) = &
+       vert_cloud_frac_upper(k) + vert_cloud_frac_lower(k)
 
-          end if
+     vert_cloud_frac(k) = &
+       max( cloud_frac(k), min( 1.0_core_rknd, vert_cloud_frac(k) ) )
 
-        end if ! rcm(k) < rc_tol
+     cloud_cover(k)  = cloud_frac(k) / vert_cloud_frac(k)
+     rcm_in_layer(k) = rcm(k) / vert_cloud_frac(k)
 
-      end do ! k = 2, gr%nz-1, 1
+       
+     
+     ! Water tracers code block begins 
+     if (trace_water) then
+        do m = 1, wtrc_nwset
+            wtrc_rcm_in_layer(k,m) = wtrc_rcm(k,m) / vert_cloud_frac(k)
+        enddo
+     endif
 
-      cloud_cover(1)       = cloud_frac(1)
-      cloud_cover(gr%nz) = cloud_frac(gr%nz)
+     if (abs( wtrc_rcm_in_layer(k,1) - rcm_in_layer(k)) .gt. 1e-12) then
+        ! write(iulog, *) ' RCM_in_layer error', wtrc_rcm_in_layer(k,1), rcm_in_layer(k)
+        ! call endrun('RCM_in_layer error')
+    endif
+    if (abs( wtrc_rcm_in_layer(k,2) - wtrc_rcm_in_layer(k,1)/2.) .gt. 1e-8) then
+        ! write(iulog, *) ' RCM_in_layer error', wtrc_rcm_in_layer(k,2), wtrc_rcm_in_layer(k,1)/2.
+        ! call endrun('RCM_in_layer error')
+    endif
+     ! Water tracers code block ends
 
-      rcm_in_layer(1)       = rcm(1)
-      rcm_in_layer(gr%nz) = rcm(gr%nz)
+   else
 
-      return
-    end subroutine compute_cloud_cover
+     if ( clubb_at_least_debug_level( 0 ) ) then
+
+       write(fstderr,*)  &
+          "Error: Should not arrive here in computation of cloud_cover"
+
+       write(fstderr,*) "At grid level k = ", k
+       write(fstderr,*) "pdf_params(k)%mixt_frac = ", pdf_params%mixt_frac(k)
+       write(fstderr,*) "pdf_params(k)%chi_1 = ", pdf_params%chi_1(k)
+       write(fstderr,*) "pdf_params(k)%chi_2 = ", pdf_params%chi_2(k)
+       write(fstderr,*) "cloud_frac(k) = ", cloud_frac(k)
+       write(fstderr,*) "rcm(k) = ", rcm(k)
+       write(fstderr,*) "rcm(k+1) = ", rcm(k+1)
+       write(fstderr,*) "rcm(k-1) = ", rcm(k-1)
+
+       return
+
+     end if
+
+   end if ! rcm(k) < rc_tol
+
+ end do ! k = 2, gr%nz-1, 1
+
+ cloud_cover(1)       = cloud_frac(1)
+ cloud_cover(gr%nz) = cloud_frac(gr%nz)
+
+ rcm_in_layer(1)       = rcm(1)
+ rcm_in_layer(gr%nz) = rcm(gr%nz)
+
+ ! Water tracers code block begins 
+ if (trace_water) then
+    do m = 1, wtrc_nwset
+       wtrc_rcm_in_layer(1,m)       = wtrc_rcm(1,m)
+       wtrc_rcm_in_layer(gr%nz,m) = wtrc_rcm(gr%nz,m)
+    enddo
+ endif
+ ! Water tracers code block ends
+
+ return
+end subroutine compute_cloud_cover
     !-----------------------------------------------------------------------
     subroutine clip_rcm &
              ( rtm, message, & ! intent(in)
@@ -4510,6 +5112,108 @@ module advance_clubb_core_module
       return
     end subroutine clip_rcm
 
+    ! Water tracers code block begins 
+        subroutine wtrc_clip_rcm &
+                ( wtrc_rtm, message, & ! intent(in)
+                wtrc_rcm )    ! intent(inout)
+
+
+                
+        !
+        ! Description:
+        !   Subroutine that reduces cloud water (rcm) whenever
+        !   it exceeds total water (rtm = vapor + liquid).
+        !   This avoids negative values of rvm = water vapor mixing ratio.
+        !   However, it will not ensure that rcm <= rtm if rtm <= 0.
+        !
+        ! NOTE: Added by JN to determine clipping effect. !!!!!
+        !
+        ! References:
+        !   None
+        !---------------------------------------------------------------------
+
+
+        use grid_class, only: gr ! Variable
+
+        use error_code, only :  &
+        clubb_at_least_debug_level ! Procedure(s)
+
+        use constants_clubb, only: &
+        fstderr, & ! Variable(s)
+        zero_threshold
+
+        use clubb_precision, only: &
+        core_rknd ! Variable(s)
+
+        !Water tracers
+        use water_tracer_vars, only: &
+        wtrc_nwset,  &
+        wtrc_iatype, &
+        iwspec
+        use water_tracers, only: &
+        wtrc_ratio
+        use water_types, only: &
+        iwtvap
+
+        implicit none
+
+        ! External functions
+        intrinsic :: max, epsilon
+
+        ! Input variables
+        real( kind = core_rknd ), dimension(gr%nz,wtrc_nwset), intent(in) :: &
+        wtrc_rtm           ! Total water mixing ratio             [kg/kg]
+
+        character(len= * ), intent(in) :: message
+
+        real( kind = core_rknd ), dimension(gr%nz,wtrc_nwset), intent(inout) :: &
+        wtrc_rcm           ! Cloud water mixing ratio  [kg/kg]
+
+        real( kind = core_rknd ), dimension(wtrc_nwset) :: &
+        rtm_ratio
+
+        integer :: k,m,n
+
+        ! ------------ Begin code ---------------
+
+        ! Vince Larson clipped rcm in order to prevent rvm < 0.  5 Apr 2008.
+        ! This code won't work unless rtm >= 0 !!!
+        ! We do not clip rcm_in_layer because rcm_in_layer only influences
+        ! radiation, and we do not want to bother recomputing it.  6 Aug 2009
+        do k = 1, gr%nz
+        !calculate isotope ratio:
+        do m=1,wtrc_nwset
+            rtm_ratio(m) = wtrc_ratio(iwspec(wtrc_iatype(m,iwtvap)),&
+                            wtrc_rtm(k,m),wtrc_rtm(k,1))
+        end do
+        do m=1,wtrc_nwset
+            if ( wtrc_rtm(k,m) < wtrc_rcm(k,m) ) then
+
+            !if ( clubb_at_least_debug_level(1) ) then
+            !  write(fstderr,*) message, ' at k=', k, 'rcm(k) = ', rcm(k), &
+            !    'rtm(k) = ', rtm(k), '.',  '  Clipping rcm.'
+
+            !end if ! clubb_at_least_debug_level(1)
+
+            if(m .eq. 1) then
+                wtrc_rcm(k,m) = max( zero_threshold, wtrc_rtm(k,m) - epsilon( wtrc_rtm(k,m) ) )
+                !set all other water tracers to just be ratio of H2O:
+                do n=2,wtrc_nwset
+                wtrc_rcm(k,n) = rtm_ratio(n)*wtrc_rcm(k,1)
+                end do
+            else
+                !simply set the tracer to be ratio of bulk water:
+                wtrc_rcm(k,m) = rtm_ratio(m)*wtrc_rcm(k,1)
+            end if
+
+            end if ! rtm(k) < rcm(k)
+
+        end do !m=1...wtrc_nwset
+        end do ! k=1..gr%nz
+
+        return
+        end subroutine wtrc_clip_rcm
+    ! Water tracers code block ends
     !-----------------------------------------------------------------------------
     subroutine set_Lscale_max( l_implemented, host_dx, host_dy, &
                                Lscale_max )

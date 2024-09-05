@@ -9,7 +9,8 @@ module advance_xm_wpxp_module
   ! References:
   ! None
   !-----------------------------------------------------------------------
-
+    use cam_logfile, only: iulog
+    use cam_abortutils, only: endrun
   implicit none
 
   private ! Default scope
@@ -63,7 +64,7 @@ module advance_xm_wpxp_module
                               um_forcing, vm_forcing, ug, vg, wpthvp, &
                               fcor, um_ref, vm_ref, up2, vp2, &
                               uprcp, vprcp, rc_coef, & 
-                              rtm, wprtp, thlm, wpthlp, &
+                              rtm, wtrc_rtm, wprtp, thlm, wpthlp, &
                               sclrm, wpsclrp, um, upwp, vm, vpwp, &
                               um_pert, vm_pert, upwp_pert, vpwp_pert)
 
@@ -213,6 +214,18 @@ module advance_xm_wpxp_module
     use advance_helper_module, only: &
         compute_Cx_fnc_Richardson ! Procedure
 
+    use water_tracer_vars, only: &
+        wtrc_nwset, &
+        trace_water, &
+        iwspec, &
+        wtrc_iawset
+    
+    use water_types, only: &
+        iwtvap
+
+    use water_tracers, only: &
+        wtrc_ratio
+
     implicit none
 
     ! External
@@ -307,6 +320,14 @@ module advance_xm_wpxp_module
       vp2       ! Variance of the v wind component             [m^2/s^2]
 
     ! Input/Output Variables
+
+    real( kind = core_rknd ), intent(inout), dimension(gr%nz, wtrc_nwset) ::  & 
+      wtrc_rtm
+    real( kind = core_rknd ), dimension(gr%nz, wtrc_nwset) ::  & 
+      wtrc_rtm_old, &
+      R
+     integer :: m
+
     real( kind = core_rknd ), intent(inout), dimension(gr%nz) ::  & 
       rtm,       & ! r_t  (total water mixing ratio)           [kg/kg]
       wprtp,     & ! w'r_t'                                    [(kg/kg) m/s]
@@ -519,6 +540,16 @@ module advance_xm_wpxp_module
     zeros_vector = zero
 
     ! Save values of predictive fields to be printed in case of crash.
+
+    if (trace_water) then
+        wtrc_rtm_old = wtrc_rtm
+        do m = 1, wtrc_nwset
+            do k=1, gr%nz
+                R(k,m) = wtrc_ratio(iwspec(wtrc_iawset(iwtvap,m)) , wtrc_rtm_old(k,m), wtrc_rtm_old(k,1))
+            enddo
+        enddo
+    endif
+
     rtm_old = rtm
     wprtp_old = wprtp
     thlm_old = thlm
@@ -985,6 +1016,24 @@ module advance_xm_wpxp_module
              low_lev_effect, high_lev_effect, &     ! Intent(in)
              l_implemented, solution(:,1), &        ! Intent(in)
              rtm, rt_tol_mfl, wprtp )               ! Intent(inout)
+
+        ! Update water tracer rtm.
+        if (trace_water) then
+            wtrc_rtm(:,1) = rtm
+            do m = 2, wtrc_nwset
+                wtrc_rtm(:,m) = wtrc_rtm(:,m) + (wtrc_rtm(:,1) - wtrc_rtm_old(:,1)) * R(:,m)
+                do k =1, gr%nz
+                    R(k,m) = wtrc_ratio(iwspec(wtrc_iawset(iwtvap,m)) , wtrc_rtm(k,m), wtrc_rtm(k,1))
+                enddo
+            enddo
+            wtrc_rtm_old = wtrc_rtm
+        endif
+        do k = 1, gr%nz
+            if (abs( wtrc_rtm(k,1) - rtm(k)) .gt. 1e-12) then
+                ! write(iulog, *) ' RTM error', wtrc_rtm(k,1), rtm(k)
+                ! call endrun('RTM error')
+            endif
+        enddo
 
       if ( clubb_at_least_debug_level( 0 ) ) then
          if ( err_code == clubb_fatal_error ) then
@@ -1656,6 +1705,25 @@ module advance_xm_wpxp_module
              l_implemented, solution(:,1),  &       ! Intent(in)
              rtm, rt_tol_mfl, wprtp )               ! Intent(inout)
 
+    ! Update wtrc_rtm here.
+        if (trace_water) then
+            wtrc_rtm(:,1) = rtm
+            do m = 2, wtrc_nwset
+                wtrc_rtm(:,m) = wtrc_rtm(:,m) + (wtrc_rtm(:,1) - wtrc_rtm_old(:,1)) * R(:,m)
+                do k =1, gr%nz
+                    R(k,m) = wtrc_ratio(iwspec(wtrc_iawset(iwtvap,m)) , wtrc_rtm(k,m), wtrc_rtm(k,1))
+                enddo
+            enddo
+            wtrc_rtm_old = wtrc_rtm
+        endif
+
+        do k = 1, gr%nz
+            if (abs( wtrc_rtm(k,1) - rtm(k)) .gt. 1e-12) then
+                ! write(iulog, *) ' RTM error', wtrc_rtm(k,1), rtm(k)
+                ! call endrun('RTM error')
+            endif
+        enddo
+
       if ( clubb_at_least_debug_level( 0 ) ) then
          if ( err_code == clubb_fatal_error ) then
             write(fstderr,*) "rtm monotonic flux limiter:  tridag failed"
@@ -1897,6 +1965,25 @@ module advance_xm_wpxp_module
 
        rtm(1:gr%nz) = sponge_damp_xm( dt, gr%zt, rtm_ref(1:gr%nz), &
                                       rtm(1:gr%nz), rtm_sponge_damp_profile )
+
+       ! Update wtrc_rtm here.
+        if (trace_water) then
+            wtrc_rtm(:,1) = rtm
+            do m = 2, wtrc_nwset
+                wtrc_rtm(:,m) = wtrc_rtm(:,m) + (wtrc_rtm(:,1) - wtrc_rtm_old(:,1)) * R(:,m)
+                do k =1, gr%nz
+                    R(k,m) = wtrc_ratio(iwspec(wtrc_iawset(iwtvap,m)) , wtrc_rtm(k,m), wtrc_rtm(k,1))
+                enddo
+            enddo
+            wtrc_rtm_old = wtrc_rtm
+        endif
+
+        do k = 1, gr%nz
+            if (abs( wtrc_rtm(k,1) - rtm(k)) .gt. 1e-12) then
+                ! write(iulog, *) ' RTM error', wtrc_rtm(k,1), rtm(k)
+                ! call endrun('RTM error')
+            endif
+        enddo
 
        if ( l_stats_samp ) then
           call stat_end_update( irtm_sdmp, rtm / dt, stats_zt )

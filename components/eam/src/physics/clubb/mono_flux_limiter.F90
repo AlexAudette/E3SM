@@ -22,7 +22,8 @@ module mono_flux_limiter
     mono_flux_thlm = 1, & ! Named constant for thlm mono_flux calls
     mono_flux_rtm = 2,  & ! Named constant for rtm mono_flux calls
     mono_flux_um = 4,   & ! Named constant for um mono_flux calls
-    mono_flux_vm = 5      ! Named constant for vm mono_flux calls
+    mono_flux_vm = 5, &      ! Named constant for vm mono_flux calls
+    mono_flux_wiso = 6    ! Named constant for wtrc mono_flux calls
 
   contains
 
@@ -450,6 +451,10 @@ module mono_flux_limiter
        iwpxp_mfl = ivpwp_mfl
        ixm_mfl   = ivm_mfl
        max_xp2   = 10.0_core_rknd
+    case ( mono_flux_wiso )  ! wtrc_rtm/wprtp
+       iwpxp_mfl = 0
+       ixm_mfl   = 0
+       max_xp2   = 5.0e-6_core_rknd
     case default    ! passive scalars are involved
        iwpxp_mfl = 0
        ixm_mfl   = 0
