@@ -17,7 +17,6 @@ module zm_conv_intr
    use perf_mod
    use cam_logfile,  only: iulog
    use constituents, only: cnst_add
-   use cam_abortutils, only: endrun
 
    
    implicit none

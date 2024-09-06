@@ -758,8 +758,6 @@ subroutine phys_init( phys_state, phys_tend, pbuf2d, cam_out )
     integer :: lchnk
     real(r8) :: dp1 = huge(1.0_r8) !set in namelist, assigned in cloud_fraction.F90
 
-    logical :: isOk
-
     !-----------------------------------------------------------------------
 
     call physics_type_alloc(phys_state, phys_tend, begchunk, endchunk, pcols)
@@ -1563,8 +1561,6 @@ subroutine tphysac (ztodt,   cam_in,  &
     real(r8) :: ftem      (pcols,pver) ! tmp space
     real(r8), pointer, dimension(:) :: static_ener_ac_2d ! Vertically integrated static energy
     real(r8), pointer, dimension(:) :: water_vap_ac_2d   ! Vertically integrated water vapor
-   !Water Tracers
-    logical :: isOK                    ! Used to check that water tracer mass is being conserved.
     ! physics buffer fields for total energy and mass adjustment
     integer itim_old, ifld
 
@@ -1733,12 +1729,6 @@ if (l_tracer_aero) then
 
 end if ! l_tracer_aero
 
- !-----------------------
-    !check water tracer mass
-    !-----------------------
-! if(trace_water) then
-!    isOK = wtrc_check_h2o("after-tracer source/sink", state, state%q, ztodt)
-! end if
 
     !===================================================
     ! Vertical diffusion/pbl calculation
@@ -1749,15 +1739,12 @@ end if ! l_tracer_aero
     !   surface friction velocity still need to be computed.  In addition, 
     !   surface fluxes need to be updated here for constituents 
     if (do_clubb_sgs) then
-      ! isOK = wtrc_check_h2o_comp("before-clubb_surface tphysac", state, state%q, ztodt)
 
 
        call clubb_surface ( state, ptend, ztodt, cam_in, surfric, obklen)
        
        ! Update surface flux constituents 
        call physics_update(state, ptend, ztodt, tend)
-      !  call wtrc_mass_fixer_first_step(state)
-      !  isOK = wtrc_check_h2o_comp("after-clubb_surface tphysac", state, state%q, ztodt)
 
 
     else
@@ -1779,12 +1766,6 @@ end if ! l_tracer_aero
        call physics_update(state, ptend, ztodt, tend)
        call t_stopf ('vertical_diffusion_tend')
 
-         !-----------------------
-   !check water tracer mass
-   !-----------------------
-  !  if(trace_water) then
-  !     isOk = wtrc_check_h2o("after-pbl", state, state%q, ztodt) !<-Will always lose mass until CLM is up and running.
-  !   end if
     
     end if ! l_vdiff
     endif
@@ -1957,7 +1938,6 @@ end if ! l_ac_energy_chk
     water_vap_ac_2d(:ncol) = ftem(:ncol,1)
 
     call check_tracers_fini(tracerint)
-    ! isOK = wtrc_check_h2o_comp("after-all tphysac", state, state%q, ztodt)
 
 end subroutine tphysac
 
@@ -2161,7 +2141,6 @@ real(r8), pointer :: wtsnow(:)      ! water tracer/isotope precipitation
 
     logical   :: lq(pcnst)
         ! For water tracers:
-    logical  :: isOK
     integer  :: p    !for H2O mass fixing
 real(r8) :: R    !for H2O mass fixing
 
@@ -2238,18 +2217,8 @@ real(r8) :: R    !for H2O mass fixing
     !Correct water tracer/isotope masses
     !***********************************
     if (trace_water) then
-      ! if (is_first_step()) then
-      ! call wtrc_mass_fixer_first_step(state)
-      
-      ! else
       call wtrc_mass_fixer_first_step(state)
-      ! isOK = wtrc_check_h2o_comp("before-all tphysbc first-step", state, state%q, ztodt)
-
-      ! end if
     endif
-    ! if (trace_water) then
-    !     isOK = wtrc_check_h2o("before-all tphysbc", state, state%q, ztodt)
-    ! end if
    !*************************************************
    !Remove all water tracer values that are too large
    !*************************************************
@@ -2269,39 +2238,22 @@ real(r8) :: R    !for H2O mass fixing
    !be more "accurate" but blow up at high resolutions.
    !**************************************************
    if(trace_water) then
-    !   if (wisotope) then
-    !      do m=2,wtrc_nwset
-    !         where (state%q(1:ncol,:,wtrc_iatype(m,:)) .gt. 1.5_r8*state%q(1:ncol,:,wtrc_iatype(1,:))) &
-    !               state%q(1:ncol,:,wtrc_iatype(m,:)) = state%q(1:ncol,:,wtrc_iatype(1,:))
-    !      end do
-    !   else
 
-do m = 2, wtrc_nwset
-    do i = 1, ncol
-        do k = 1, pver
-            do p = 1, pwtype
-                if (state%q(i,k,wtrc_iatype(m,p)) .gt. state%q(i,k,wtrc_iatype(1,p))) then
-                    state%q(i,k,wtrc_iatype(m,p)) = state%q(i,k,wtrc_iatype(1,p))
-                endif
-            enddo
-        enddo
-    enddo
-enddo
+      do m = 2, wtrc_nwset
+          do i = 1, ncol
+              do k = 1, pver
+                  do p = 1, pwtype
+                      if (state%q(i,k,wtrc_iatype(m,p)) .gt. state%q(i,k,wtrc_iatype(1,p))) then
+                          state%q(i,k,wtrc_iatype(m,p)) = state%q(i,k,wtrc_iatype(1,p))
+                      endif
+                  enddo
+              enddo
+          enddo
+      enddo
 
-        !  do m=2,wtrc_nwset
-        !     where (state%q(1:ncol,:,wtrc_iatype(m,:)) .gt. state%q(1:ncol,:,wtrc_iatype(1,:))) &
-        !                  state%q(1:ncol,:,wtrc_iatype(m,:)) = state%q(1:ncol,:,wtrc_iatype(1,:))
-        !     do p=1,pwtype 
-        !        if (.not.(wtrc_is_tagged(wtrc_iatype(m,p)))) &
-        !               state%q(1:ncol,:,wtrc_iatype(m,p)) = wtrc_get_rstd(iwspec(wtrc_iatype(m,p)))*&
-        !                                                       state%q(1:ncol,:,wtrc_iatype(1,p))
-        !     end do
-        !  end do
-    !   end if
       do p=1,pwtype
         do m=2,wtrc_nwset
            n = wtrc_iatype(m,p)
-          !  call qneg3('wiso',lchnk  ,ncol    ,pcols   ,pver, n, n, qmin(n), state%q(1,1,n), .true. )
            call massborrow("wiso",lchnk,ncol,pcols,m,m,qmin(m),state%q(1,1,m),state%pdel, .true.)
         end do
       end do
@@ -2530,11 +2482,7 @@ if (trace_water) then
         enddo
     endif
     
-  !  if (trace_water) then
-    !   end if
     call physics_update(state, ptend, ztodt, tend)
-    ! call wtrc_mass_fixer_first_step(state)
-    ! isOK = wtrc_check_h2o_comp("after-dadadj after-update", state, state%q, ztodt)
 
     call t_stopf('dry_adjustment')
 
@@ -2549,16 +2497,6 @@ end if
     ! are zeroed here for input to the moist convection routine
     !
 
-    !-----------------------
-    !Check water tracer mass
-    !-----------------------
-    ! isOK = wtrc_check_h2o_comp("before-deep", state, state%q, ztodt)
-
-
-    ! if (trace_water) then
-    !   ! will always indicates mass loss until Land is up and running
-    !   isOK = wtrc_check_h2o("before-convection", state, state%q, ztodt) 
-    ! end if
     call t_startf ('convect_deep_tend')
     call convect_deep_tend(  &
          cmfmc,      cmfcme,             &
@@ -2570,20 +2508,6 @@ end if
     call t_stopf('convect_deep_tend')
 
     call physics_update(state, ptend, ztodt, tend)
-    ! if (trace_water) then
-    !   ! call wtrc_mass_fixer_first_step(state)
-      ! isOK = wtrc_check_h2o_comp("after-deep after-update", state, state%q, ztodt)
-    ! end if
-
-    ! if (masterproc) write(iulog, *) 'Deep convection is done.'
-    ! call endrun('Deep convection is done.')
-
-     !-----------------------
-    !Check water tracer mass
-    !-----------------------
-    ! if (trace_water) then
-    !   isOK = wtrc_check_h2o("after-deep tphysbc", state, state%q, ztodt)
-    ! end if
 
     call pbuf_get_field(pbuf, prec_dp_idx, prec_dp )
     call pbuf_get_field(pbuf, snow_dp_idx, snow_dp )
@@ -2617,11 +2541,6 @@ end if
 
 
     call physics_update(state, ptend, ztodt, tend)
-    ! isOK = wtrc_check_h2o_comp("after-shallow tphysbc", state, state%q, ztodt)
-
-
-    ! call wtrc_mass_fixer_first_step(state)
-
 
     !***********************************
     !Correct water tracer/isotope masses
@@ -2630,13 +2549,6 @@ end if
       call wtrc_mass_fixer(state)
     end if
     !***********************************
-
-    !-----------------------
-    !Check water tracer mass
-    !-----------------------
-    ! if (trace_water) then
-    !     isOK = wtrc_check_h2o("after-shallow tphysbc", state, state%q, ztodt)
-    !   end if
 
     flx_cnd(:ncol) = prec_sh(:ncol) + rliq2(:ncol)
     call check_energy_chng(state, tend, "convect_shallow", nstep, ztodt, zero, flx_cnd, snow_sh, zero)
@@ -2775,7 +2687,6 @@ end if
              ! =====================================================
              !    CLUBB call (PBL, shallow convection, macrophysics)
              ! =====================================================  
-    ! isOk = wtrc_check_h2o_comp('before-clubb', state, state%q, ztodt)
 
    
              call clubb_tend_cam(state,ptend,pbuf,cld_macmic_ztodt,&
@@ -2794,10 +2705,7 @@ end if
                 ! the full time (ztodt).
                 call physics_ptend_scale(ptend, 1._r8/cld_macmic_num_steps, ncol)
                 !    Update physics tendencies and copy state to state_eq, because that is 
-                !      input for microphysics            
-                ! isOk = wtrc_check_tend_comp('after-clubb before update', state, ptend%q, ztodt)
-                ! isOk = wtrc_check_h2o_comp('after-clubb before update', state, state%q, ztodt)
-
+                !      input for microphysics
   
                 call physics_update(state, ptend, ztodt, tend)
                 call check_energy_chng(state, tend, "clubb_tend", nstep, ztodt, &
@@ -2808,14 +2716,10 @@ end if
                 call wtrc_rescale_groups(state) ! This call is necessary to fix non-linear errors that happen in CLUBB.
 
 
-                ! call wtrc_mass_fixer(state)
-                ! isOk = wtrc_check_h2o_comp('after-clubb', state, state%q, ztodt)
- 
           endif
 
           call t_stopf('macrop_tend')
         end if ! l_st_mac
-        ! isOk = wtrc_check_h2o_comp('before-MG', state, state%q, ztodt)
 
 
           !===================================================
@@ -2941,8 +2845,6 @@ end if
        end if
      end if !microp_scheme
 
-    !  isOk = wtrc_check_h2o_comp('after-MG', state, state%q, ztodt)
-
    if (l_tracer_aero) then
       if ( .not. deep_scheme_does_scav_trans() ) then
 
@@ -3055,12 +2957,6 @@ end if ! l_rad
     call t_stopf('diag_export')
 
     call check_tracers_fini(tracerint)
-    ! call wtrc_mass_fixer_first_step(state)
-
-! isOK = wtrc_check_h2o_comp("after tphysbc", state, state%q, ztodt)
-
-
-    ! if (trace_water) call wtrc_mass_fixer(state)
 
 end subroutine tphysbc
 

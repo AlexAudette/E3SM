@@ -1090,7 +1090,7 @@ subroutine micro_mg_cam_tend(state, ptend, dtime, pbuf)
                                 wtrc_ncnst, wtrc_nwset, &
                                 wtrc_srfpcp_indices, wtrc_iatype
    use water_tracers,     only: wtrc_apply_rates, wtrc_apply_rates_mg1, wtrc_init_rates, wtrc_add_rates, &
-                                wtrc_add_rates, wtrc_mg_inter, wtrc_check_h2o,wtrc_check_tend_comp, wtrc_check_h2o_comp, wtrc_mass_fixer
+                                wtrc_add_rates
    use water_types,       only: pwtype, iwtvap, iwtliq, iwtice, iwtstrain, iwtstsnow
 
 
@@ -1693,7 +1693,6 @@ subroutine micro_mg_cam_tend(state, ptend, dtime, pbuf)
    real(r8) :: ncmei_grid(pcols,pver)                             ! Negative cmeiout - sublimation
    real(r8) :: pmelts_grid(pcols,pver)                            ! Positive melts - melting
    real(r8) :: nmelts_grid(pcols,pver)                            ! Negative melts (freezing?)
-   logical  :: isOk                                               ! Flag indicating test success
 
    ! above water tracers/isotopes arrays on the grid level
 
@@ -1726,7 +1725,6 @@ subroutine micro_mg_cam_tend(state, ptend, dtime, pbuf)
    integer :: autocl_idx, accretl_idx  ! Aerocom IND3
    integer :: cldliqbf_idx, cldicebf_idx, numliqbf_idx, numicebf_idx
 
-!    logical :: isOk
 
    !-------------------------------------------------------------------------------
 
@@ -2357,8 +2355,6 @@ endif
       end if
 
       if (trace_water) then
-        ! call wtrc_mass_fixer(state_loc)
-        ! isOk = wtrc_check_h2o_comp("before micro_mg", state_loc, state_loc%q,1._r8)
         do m = 1, wtrc_nwset
 
           packed_wtrc_q(:,:,m) = packer%pack(state_loc%q(:,:,wtrc_iatype(m,iwtvap)))
@@ -2368,27 +2364,6 @@ endif
               packed_wtrc_qr(:,:,m) = packer%pack(state_loc%q(:,:,wtrc_iatype(m,iwtstrain)))
               packed_wtrc_qs(:,:,m) = packer%pack(state_loc%q(:,:,wtrc_iatype(m,iwtstsnow)))
             end if
-          ! if (m.eq.1) then
-          
-          !   packed_wtrc_q(:,:,m) = packed_q(:,:)
-          !   packed_wtrc_qc(:,:,m) = packed_qc(:,:)
-          !   packed_wtrc_qi(:,:,m) = packed_qi(:,:)
-          !   if (micro_mg_version > 1) then
-          !     packed_wtrc_qr(:,:,m) = packed_qr(:,:)
-          !     packed_wtrc_qs(:,:,m) = packed_qs(:,:)
-          !   end if
-          ! else
-
-          
-          !   packed_wtrc_q(:,:,m) = packed_q(:,:) * 0.5_r8
-          !   packed_wtrc_qc(:,:,m) = packed_qc(:,:) * 0.5_r8
-          !   packed_wtrc_qi(:,:,m) = packed_qi(:,:) * 0.5_r8
-          !   if (micro_mg_version > 1) then
-          !     packed_wtrc_qr(:,:,m) = packed_qr(:,:) * 0.5_r8
-          !     packed_wtrc_qs(:,:,m) = packed_qs(:,:) * 0.5_r8
-          !   end if
-          ! endif
-
         enddo
 
       endif
@@ -2607,9 +2582,6 @@ endif
              
          enddo
       endif
-      ! if (trace_water) then
-      !   isOK = wtrc_check_tend_comp("after-microp_driver_tend tphysbc", state, ptend_loc%q, 1._r8)
-      !  end if
 !----------------------
       ! Sum into overall ptend
       call physics_ptend_sum(ptend_loc, ptend, ncol)

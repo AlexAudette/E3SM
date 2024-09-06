@@ -1,6 +1,4 @@
 module micro_mg2_0_tags
-use cam_logfile, only: iulog
-use cam_abortutils, only: endrun
 !---------------------------------------------------------------------------------
 ! Purpose:
 !   MG microphysics version 2.0 - Update of MG microphysics with
@@ -1279,14 +1277,8 @@ subroutine micro_mg_tend ( &
                     if (trace_water) then
                         do m = 1, wtrc_nwset
                             snow_ratio_array(i,k,m) = wtrc_ratio(m,wtrc_qs(i,k,m), wtrc_qs(i,k,1))
-                            ! if (snow_ratio_array(i,k,m) .lt. 0._r8) then
-                            !   write(iulog, *) snow_ratio_array(i,k,m), wtrc_qs(i,k,m), wtrc_qs(i,k,1),m
-                            !   call endrun('snow_ratio < 0')
-                            ! endif
                         enddo
                         do m=1, wtrc_nwset
-                            !    wtrc_qr(i,k,m) = max(wtrc_qr(i,k,m) + minstrf(i,k)*snow_ratio_array(i,k,m), 0._r8)
-                            !    wtrc_qs(i,k,m) = max(wtrc_qs(i,k,m) - minstrf(i,k)*snow_ratio_array(i,k,m), 0._r8)
                             wtrc_qr(i,k,m) = max(wtrc_qr(i,k,m) + dum * wtrc_qs(i,k,m), 0._r8) ! order matters here
                             wtrc_qs(i,k,m) = max(wtrc_qs(i,k,m) - dum * wtrc_qs(i,k,m), 0._r8)
                         enddo
@@ -1328,14 +1320,8 @@ subroutine micro_mg_tend ( &
                     if (trace_water) then
                         do m = 1, wtrc_nwset
                             rain_ratio_array(i,k,m) = wtrc_ratio(m,wtrc_qr(i,k,m), wtrc_qr(i,k,1))
-                            ! if (rain_ratio_array(i,k,m) .lt. 0._r8) then
-                            !   write(iulog, *) rain_ratio_array(i,k,m), wtrc_qr(i,k,m), wtrc_qr(i,k,1),m
-                            !   call endrun('rain_ratio < 0')
-                            ! endif
                         enddo
                         do m=1, wtrc_nwset
-                            ! wtrc_qr(i,k,m) = max(wtrc_qr(i,k,m) - minstrf(i,k)*rain_ratio_array(i,k,m), 0._r8)
-                            ! wtrc_qs(i,k,m) = max(wtrc_qs(i,k,m) + minstrf(i,k)*rain_ratio_array(i,k,m), 0._r8)
                             wtrc_qs(i,k,m) = max(wtrc_qs(i,k,m) + dum * wtrc_qr(i,k,m), 0._r8) !order matters here
                             wtrc_qr(i,k,m) = max(wtrc_qr(i,k,m) - dum * wtrc_qr(i,k,m), 0._r8)
                         enddo
@@ -2057,192 +2043,46 @@ subroutine micro_mg_tend ( &
                 (prai(i,k)+prci(i,k))*icldm(i,k)+(psacws(i,k)+bergs(i,k))*lcldm(i,k)+(prds(i,k)+ &
                 pracs(i,k)+mnuccr(i,k))*precip_frac(i,k)
 
-                ! if (wtrc_qctend(i,k,3) * wtrc_qctend(i,k,1) .lt. 0._r8) then
-                !   write(iulog,*) 'qctend signs wrong', wtrc_qctend(i,k,3) , wtrc_qctend(i,k,1)
-                !   call endrun('qctend sign wrong')
-                ! endif
-                ! if (wtrc_qrtend(i,k,3) * wtrc_qrtend(i,k,1) .lt. 0._r8) then
-                !   write(iulog,*) 'qrtend signs wrong', wtrc_qrtend(i,k,3) , wtrc_qrtend(i,k,1)
-                !   call endrun('qrtend sign wrong')
-                ! endif
-                ! if (wtrc_qitend(i,k,3) * wtrc_qitend(i,k,1) .lt. 0._r8) then
-                !   write(iulog,*) 'qitend signs wrong', wtrc_qitend(i,k,3) , wtrc_qitend(i,k,1)
-                !   call endrun('qitend sign wrong')
-                ! endif
-                ! if (wtrc_qstend(i,k,3) * wtrc_qstend(i,k,1) .lt. 0._r8) then
-                !   write(iulog,*) 'qstend signs wrong', wtrc_qstend(i,k,3) , wtrc_qstend(i,k,1)
-                !   call endrun('qstend sign wrong')
-                ! endif
-
-
             if (trace_water) then
                 do m = 1, wtrc_nwset
                   ! Calculate necessary ratios
-                  ! if (abs(wtrc_qv(i,k,2) - qv(i,k,1)*0.5_r8) .gt. 1.e-24) then
-                  !   write(iulog, *) 'q error', wtrc_qv(i,k,2) , qv(i,k,1)*0.5_r8
-                  !   call endrun('q error')
-                  ! endif
-                  ! if (abs(wtrc_qc(i,k,2) - qc(i,k)*0.5_r8) .gt. 1.e-24) then
-                  !   write(iulog, *) 'qc error', wtrc_qc(i,k,2) , qc(i,k)*0.5_r8
-                  !   call endrun('qc error')
-                  ! endif
-                  ! if (abs(wtrc_qi(i,k,2) - qi(i,k)*0.5_r8) .gt. 1.e-24) then
-                  !   write(iulog, *) 'qi error', wtrc_qi(i,k,2) , qi(i,k)*0.5_r8
-                  !   call endrun('qi error')
-                  ! endif
-                  ! if (abs(wtrc_qr(i,k,2) - qr(i,k)*0.5_r8) .gt. 1.e-24) then
-                  !   write(iulog, *) 'qr error', wtrc_qr(i,k,2) , qr(i,k)*0.5_r8
-                  !   call endrun('qr error')
-                  ! endif
-                  ! if (abs(wtrc_qs(i,k,2) - qs(i,k)*0.5_r8) .gt. 1.e-24) then
-                  !   write(iulog, *) 'qs error', wtrc_qs(i,k,2) , qs(i,k)*0.5_r8
-                  !   call endrun('qs error')
-                  ! endif
 
-                    vap_ratio_array(i,k,m) = wtrc_ratio(m,wtrc_qvn(i,k,m),wtrc_qvn(i,k,1))
-
-                    ! if (wtrc_qin(i,k,1) .lt. 1.e-24) then
-                    !   ice_ratio_array(i,k,m) = vap_ratio_array(i,k,m)
-                    ! else
-                      ice_ratio_array(i,k,m) = wtrc_ratio(m,wtrc_qin(i,k,m),wtrc_qin(i,k,1))
-                    ! endif
-
-                    ! if (wtrc_qcn(i,k,1) .lt. 1.e-24) then
-                    !   liq_ratio_array(i,k,m) = vap_ratio_array(i,k,m)
-                    ! else
-                      liq_ratio_array(i,k,m) = wtrc_ratio(m,wtrc_qcn(i,k,m),wtrc_qcn(i,k,1))
-                    ! endif
-
-                    ! if (wtrc_qrn(i,k,1) .lt. 1.e-24) then
-                    !   rain_ratio_array(i,k,m) = vap_ratio_array(i,k,m)
-                    ! else
-                      rain_ratio_array(i,k,m) = wtrc_ratio(m,wtrc_qrn(i,k,m),wtrc_qrn(i,k,1))
-                    ! endif
-
-                    ! if (wtrc_qsn(i,k,1) .lt. 1.e-24) then
-                    !   snow_ratio_array(i,k,m) = vap_ratio_array(i,k,m)
-                    ! else
-                      snow_ratio_array(i,k,m) = wtrc_ratio(m,wtrc_qsn(i,k,m),wtrc_qsn(i,k,1))
-                    ! endif
-
-
-                    ! if (liq_ratio_array(i,k,m) .lt. 0._r8) then
-                    !   write(iulog, *) liq_ratio_array(i,k,m), wtrc_qcn(i,k,m), wtrc_qcn(i,k,1),m
-                    !   call endrun('liq_ratio < 0')
-                    ! endif
-                    ! if (ice_ratio_array(i,k,m) .lt. 0._r8) then
-                    !   write(iulog, *) ice_ratio_array(i,k,m), wtrc_qin(i,k,m), wtrc_qin(i,k,1),m
-                    !   call endrun('ice_ratio < 0')
-                    ! endif
-                    ! if (rain_ratio_array(i,k,m) .lt. 0._r8) then
-                    !   write(iulog, *) rain_ratio_array(i,k,m), wtrc_qrn(i,k,m), wtrc_qrn(i,k,1),m
-                    !   call endrun('rain_ratio < 0')
-                    ! endif
-                    ! if (snow_ratio_array(i,k,m) .lt. 0._r8) then
-                    !   write(iulog, *) snow_ratio_array(i,k,m), wtrc_qsn(i,k,m), wtrc_qsn(i,k,1),m
-                    !   call endrun('snow_ratio < 0')
-                    ! endif
-                  enddo
-
-                  ! if (wtrc_qctend(i,k,3) * wtrc_qctend(i,k,1) .lt. 0._r8) then
-                  !   write(iulog,*) 'qctend signs wrong', wtrc_qctend(i,k,3) , wtrc_qctend(i,k,1), liq_ratio_array(i,k,3)
-                  !   call endrun('qctend sign wrong')
-                  ! endif
-                  ! if (wtrc_qrtend(i,k,3) * wtrc_qrtend(i,k,1) .lt. 0._r8) then
-                  !   write(iulog,*) 'qrtend signs wrong', wtrc_qrtend(i,k,3) , wtrc_qrtend(i,k,1),rain_ratio_array(i,k,3)
-                  !   call endrun('qrtend sign wrong')
-                  ! endif
-                  ! if (wtrc_qitend(i,k,3) * wtrc_qitend(i,k,1) .lt. 0._r8) then
-                  !   write(iulog,*) 'qitend signs wrong', wtrc_qitend(i,k,3) , wtrc_qitend(i,k,1), qitend(i,k), ice_ratio_array(i,k,3), liq_ratio_array(i,k,3), vap_ratio_array(i,k,3), snow_ratio_array(i,k,3), rain_ratio_array(i,k,3)
-      
-                  !   write(iulog,*) ((mnuccc(i,k)+mnucct(i,k)+msacwi(i,k))*liq_ratio_array(i,k,3)+ mnudep(i,k)*vap_ratio_array(i,k,3))*lcldm(i,k), ((mnuccc(i,k)+mnucct(i,k)+msacwi(i,k))*liq_ratio_array(i,k,1)+ mnudep(i,k)*vap_ratio_array(i,k,1))*lcldm(i,k)
-                  !   write(iulog,*) (-prci(i,k)-prai(i,k))*icldm(i,k)*ice_ratio_array(i,k,3), (-prci(i,k)-prai(i,k))*icldm(i,k)*ice_ratio_array(i,k,1)
-                  !   write(iulog,*) vap_dep(i,k)*vap_ratio_array(i,k,3),vap_dep(i,k)*vap_ratio_array(i,k,1)
-                  !   write(iulog,*) berg(i,k)*liq_ratio_array(i,k,3), berg(i,k)*liq_ratio_array(i,k,1)
-                  !   write(iulog,*) ice_sublim(i,k)*ice_ratio_array(i,k,3), ice_sublim(i,k)*ice_ratio_array(i,k,1)
-                  !   write(iulog,*) mnuccd(i,k)*vap_ratio_array(i,k,3), mnuccd(i,k)*vap_ratio_array(i,k,1)
-                  !   write(iulog,*) mnuccri(i,k)*precip_frac(i,k)*rain_ratio_array(i,k,3), mnuccri(i,k)*precip_frac(i,k)*rain_ratio_array(i,k,1)
-                  !   call endrun('qitend sign wrong')
-                  ! endif
-                  ! if (wtrc_qstend(i,k,3) * wtrc_qstend(i,k,1) .lt. 0._r8) then
-                  !   write(iulog,*) 'qstend signs wrong', wtrc_qstend(i,k,3) , wtrc_qstend(i,k,1)
-                  !   call endrun('qstend sign wrong')
-                  ! endif
-                  do m = 1, wtrc_nwset
-
-                    wtrc_qvlat(i,k,m) = wtrc_qvlat(i,k,m)- &
-                        (pre(i,k)*rain_ratio_array(i,k,m)+prds(i,k)*snow_ratio_array(i,k,m))*precip_frac(i,k)-&
-                        vap_dep(i,k)*vap_ratio_array(i,k,m)-ice_sublim(i,k)*ice_ratio_array(i,k,m)-mnuccd(i,k)*vap_ratio_array(i,k,m)-mnudep(i,k)*lcldm(i,k)*vap_ratio_array(i,k,m)
-
-                    wtrc_qctend(i,k,m) = wtrc_qctend(i,k,m)+ &
-                        ((-pra(i,k)-prc(i,k)-mnuccc(i,k)-mnucct(i,k)-msacwi(i,k)- &
-                        psacws(i,k)-bergs(i,k))*lcldm(i,k)-berg(i,k))*liq_ratio_array(i,k,m)
-
-
-                    wtrc_qitend(i,k,m) = wtrc_qitend(i,k,m)+ &
-                        ((mnuccc(i,k)+mnucct(i,k)+msacwi(i,k))*liq_ratio_array(i,k,m)+mnudep(i,k)*vap_ratio_array(i,k,m))*lcldm(i,k)+&
-                        (-prci(i,k)-prai(i,k))*icldm(i,k)*ice_ratio_array(i,k,m)+&
-                        vap_dep(i,k)*vap_ratio_array(i,k,m)+&
-                        berg(i,k)*liq_ratio_array(i,k,m)+&
-                        ice_sublim(i,k)*ice_ratio_array(i,k,m)+ &
-                        mnuccd(i,k)*vap_ratio_array(i,k,m)+&
-                        mnuccri(i,k)*precip_frac(i,k)*rain_ratio_array(i,k,m)
-
-                    wtrc_qrtend(i,k,m) = wtrc_qrtend(i,k,m)+ &
-                        (pra(i,k)+prc(i,k))*lcldm(i,k)*ice_ratio_array(i,k,m)+(pre(i,k)-pracs(i,k)- &
-                        mnuccr(i,k)-mnuccri(i,k))*precip_frac(i,k)*rain_ratio_array(i,k,m)
-
-                    wtrc_qstend(i,k,m) = wtrc_qstend(i,k,m)+ &
-                        (prai(i,k)+prci(i,k))*icldm(i,k)*ice_ratio_array(i,k,m)+(psacws(i,k)+bergs(i,k))*lcldm(i,k)*liq_ratio_array(i,k,m)+(prds(i,k)*snow_ratio_array(i,k,m)+ &
-                        pracs(i,k)*rain_ratio_array(i,k,m)+mnuccr(i,k)*rain_ratio_array(i,k,m))*precip_frac(i,k)
+                  vap_ratio_array(i,k,m) = wtrc_ratio(m,wtrc_qvn(i,k,m),wtrc_qvn(i,k,1))
+                  ice_ratio_array(i,k,m) = wtrc_ratio(m,wtrc_qin(i,k,m),wtrc_qin(i,k,1))
+                  liq_ratio_array(i,k,m) = wtrc_ratio(m,wtrc_qcn(i,k,m),wtrc_qcn(i,k,1))
+                  rain_ratio_array(i,k,m) = wtrc_ratio(m,wtrc_qrn(i,k,m),wtrc_qrn(i,k,1))
+                  snow_ratio_array(i,k,m) = wtrc_ratio(m,wtrc_qsn(i,k,m),wtrc_qsn(i,k,1))
                 enddo
+
+                do m = 1, wtrc_nwset
+
+                  wtrc_qvlat(i,k,m) = wtrc_qvlat(i,k,m)- &
+                      (pre(i,k)*rain_ratio_array(i,k,m)+prds(i,k)*snow_ratio_array(i,k,m))*precip_frac(i,k)-&
+                      vap_dep(i,k)*vap_ratio_array(i,k,m)-ice_sublim(i,k)*ice_ratio_array(i,k,m)-mnuccd(i,k)*vap_ratio_array(i,k,m)-mnudep(i,k)*lcldm(i,k)*vap_ratio_array(i,k,m)
+
+                  wtrc_qctend(i,k,m) = wtrc_qctend(i,k,m)+ &
+                      ((-pra(i,k)-prc(i,k)-mnuccc(i,k)-mnucct(i,k)-msacwi(i,k)- &
+                      psacws(i,k)-bergs(i,k))*lcldm(i,k)-berg(i,k))*liq_ratio_array(i,k,m)
+
+
+                  wtrc_qitend(i,k,m) = wtrc_qitend(i,k,m)+ &
+                      ((mnuccc(i,k)+mnucct(i,k)+msacwi(i,k))*liq_ratio_array(i,k,m)+mnudep(i,k)*vap_ratio_array(i,k,m))*lcldm(i,k)+&
+                      (-prci(i,k)-prai(i,k))*icldm(i,k)*ice_ratio_array(i,k,m)+&
+                      vap_dep(i,k)*vap_ratio_array(i,k,m)+&
+                      berg(i,k)*liq_ratio_array(i,k,m)+&
+                      ice_sublim(i,k)*ice_ratio_array(i,k,m)+ &
+                      mnuccd(i,k)*vap_ratio_array(i,k,m)+&
+                      mnuccri(i,k)*precip_frac(i,k)*rain_ratio_array(i,k,m)
+
+                  wtrc_qrtend(i,k,m) = wtrc_qrtend(i,k,m)+ &
+                      (pra(i,k)+prc(i,k))*lcldm(i,k)*ice_ratio_array(i,k,m)+(pre(i,k)-pracs(i,k)- &
+                      mnuccr(i,k)-mnuccri(i,k))*precip_frac(i,k)*rain_ratio_array(i,k,m)
+
+                  wtrc_qstend(i,k,m) = wtrc_qstend(i,k,m)+ &
+                      (prai(i,k)+prci(i,k))*icldm(i,k)*ice_ratio_array(i,k,m)+(psacws(i,k)+bergs(i,k))*lcldm(i,k)*liq_ratio_array(i,k,m)+(prds(i,k)*snow_ratio_array(i,k,m)+ &
+                      pracs(i,k)*rain_ratio_array(i,k,m)+mnuccr(i,k)*rain_ratio_array(i,k,m))*precip_frac(i,k)
+              enddo
             endif
-
-            ! if (wtrc_qctend(i,k,3) * wtrc_qctend(i,k,1) .lt. 0._r8) then
-            !   write(iulog,*) 'qctend signs wrong', wtrc_qctend(i,k,3) , wtrc_qctend(i,k,1), liq_ratio_array(i,k,3)
-            !   call endrun('qctend sign wrong')
-            ! endif
-            ! if (wtrc_qrtend(i,k,3) * wtrc_qrtend(i,k,1) .lt. 0._r8) then
-            !   write(iulog,*) 'qrtend signs wrong', wtrc_qrtend(i,k,3) , wtrc_qrtend(i,k,1),rain_ratio_array(i,k,3)
-            !   call endrun('qrtend sign wrong')
-            ! endif
-            ! if (wtrc_qitend(i,k,3) * wtrc_qitend(i,k,1) .lt. 0._r8) then
-            !   write(iulog,*) 'qitend signs wrong', wtrc_qitend(i,k,3), wtrc_qitend(i,k,3)+wtrc_qitend(i,k,4) , wtrc_qitend(i,k,1), qitend(i,k), ice_ratio_array(i,k,3), liq_ratio_array(i,k,3), vap_ratio_array(i,k,3), snow_ratio_array(i,k,3), rain_ratio_array(i,k,3)
-
-            !   write(iulog,*) ((mnuccc(i,k)+mnucct(i,k)+msacwi(i,k))*liq_ratio_array(i,k,3)+ mnudep(i,k)*vap_ratio_array(i,k,3))*lcldm(i,k), ((mnuccc(i,k)+mnucct(i,k)+msacwi(i,k))*liq_ratio_array(i,k,1)+ mnudep(i,k)*vap_ratio_array(i,k,1))*lcldm(i,k)
-            !   write(iulog,*) (-prci(i,k)-prai(i,k))*icldm(i,k)*ice_ratio_array(i,k,3), (-prci(i,k)-prai(i,k))*icldm(i,k)*ice_ratio_array(i,k,1)
-            !   write(iulog,*) vap_dep(i,k)*vap_ratio_array(i,k,3),vap_dep(i,k)*vap_ratio_array(i,k,1)
-            !   write(iulog,*) berg(i,k)*liq_ratio_array(i,k,3), berg(i,k)*liq_ratio_array(i,k,1)
-            !   write(iulog,*) ice_sublim(i,k)*ice_ratio_array(i,k,3), ice_sublim(i,k)*ice_ratio_array(i,k,1)
-            !   write(iulog,*) mnuccd(i,k)*vap_ratio_array(i,k,3), mnuccd(i,k)*vap_ratio_array(i,k,1)
-            !   write(iulog,*) mnuccri(i,k)*precip_frac(i,k)*rain_ratio_array(i,k,3), mnuccri(i,k)*precip_frac(i,k)*rain_ratio_array(i,k,1)
-            !   call endrun('qitend sign wrong')
-            ! endif
-            ! if (wtrc_qstend(i,k,3) * wtrc_qstend(i,k,1) .lt. 0._r8) then
-            !   write(iulog,*) 'qstend signs wrong', wtrc_qstend(i,k,3) , wtrc_qstend(i,k,1)
-            !   call endrun('qstend sign wrong')
-            ! endif
-                ! if (abs(wtrc_qvlat(i,k,1) - qvlat(i,k)) .gt. 1.e-24) then
-                !   write(iulog, *) 'qvlat error', wtrc_qvlat(i,k,1) , qvlat(i,k), rain_ratio_array(i,k,1), snow_ratio_array(i,k,1), ice_ratio_array(i,k,1), vap_ratio_array(i,k,1)
-                !   call endrun('qvlat error')
-                ! endif
-                ! if (abs(wtrc_qctend(i,k,1) - qctend(i,k)) .gt. 1.e-24) then
-                !   write(iulog, *) 'qctend error', wtrc_qctend(i,k,1) , qctend(i,k),liq_ratio_array(i,k,1)
-                !   call endrun('qctend error')
-                ! endif
-                ! if (abs(wtrc_qitend(i,k,1) - qitend(i,k)) .gt. 1.e-24) then
-                !   write(iulog, *) 'qitend error', wtrc_qitend(i,k,1) , qitend(i,k), rain_ratio_array(i,k,1), liq_ratio_array(i,k,1), ice_ratio_array(i,k,1), vap_ratio_array(i,k,1)
-                !   call endrun('qitend error')
-                ! endif
-                ! if (abs(wtrc_qrtend(i,k,1) - qrtend(i,k)) .gt. 1.e-24) then
-                !   write(iulog, *) 'qrtend error', wtrc_qrtend(i,k,1) , qrtend(i,k), ice_ratio_array(i,k,1), rain_ratio_array(i,k,1)
-                !   call endrun('qrtend error')
-                ! endif
-                ! if (abs(wtrc_qstend(i,k,1) - qstend(i,k)) .gt. 1.e-24) then
-                !   write(iulog, *) 'qstend error', wtrc_qstend(i,k,1) , qstend(i,k), rain_ratio_array(i,k,1), snow_ratio_array(i,k,1), ice_ratio_array(i,k,1), liq_ratio_array(i,k,1)
-                !   call endrun('qstend error')
-                ! endif
-
 
             cmeout(i,k) = vap_dep(i,k) + ice_sublim(i,k) + mnuccd(i,k) + mnudep(i,k)*lcldm(i,k)
 
@@ -2400,29 +2240,13 @@ subroutine micro_mg_tend ( &
 
     if (trace_water) then
         do m = 1, wtrc_nwset
-            ! dum_2D = wtrc_qs(:,:,m)
             wtrc_qstend(:,:,m) = wtrc_qstend(:,:,m) + (wtrc_qs(:,:,m)-wtrc_qsn(:,:,m))/deltat
             wtrc_qs(:,:,m) = wtrc_qsn(:,:,m)
 
-            ! dum_2D = wtrc_qr(:,:,m)
             wtrc_qrtend(:,:,m) = wtrc_qrtend(:,:,m) + (wtrc_qr(:,:,m)-wtrc_qrn(:,:,m))/deltat
             wtrc_qr(:,:,m) = wtrc_qrn(:,:,m)
         enddo
     endif
-!     do i = 1, mgncol
-!       do k = 1, nlev
-!     if (abs(wtrc_qstend(i,k,1) - qstend(i,k)) .gt. 1.e-24) then
-!       write(iulog, *) 'qstend error', wtrc_qstend(i,k,1) , qstend(i,k), qs(i,k), wtrc_qs(i,k,1)
-!       call endrun('qstend error')
-!     endif
-
-!     if (abs(wtrc_qrtend(i,k,1) - qrtend(i,k)) .gt. 1.e-24) then
-!       write(iulog, *) 'qrtend error', wtrc_qrtend(i,k,1) , qrtend(i,k), qr(i,k), wtrc_qr(i,k,1)
-!       call endrun('qrtend error')
-!     endif
-!   enddo
-! enddo
-
     !.............................................................................
 
     !================================================================================
@@ -2472,26 +2296,8 @@ subroutine micro_mg_tend ( &
                         rain_ratio_array(i,k,m) = wtrc_ratio(m,wtrc_dumr(i,k,m),wtrc_dumr(i,k,1))
                         snow_ratio_array(i,k,m) = wtrc_ratio(m,wtrc_dums(i,k,m),wtrc_dums(i,k,1))
 
-                        ! if (ice_ratio_array(i,k,m) .lt. )
                         
                     enddo
-
-                    ! if (wtrc_dumc(i,k,3) * wtrc_dumc(i,k,1) .lt. 0._r8) then
-                    !   write(iulog,*) 'dumc signs wrong', wtrc_dumc(i,k,3),  wtrc_dumc(i,k,3)+ wtrc_dumc(i,k,4) , wtrc_dumc(i,k,1)
-                    !   call endrun('dumc sign wrong')
-                    ! endif
-                    ! if (wtrc_dumr(i,k,3) * wtrc_dumr(i,k,1) .lt. 0._r8) then
-                    !   write(iulog,*) 'dumr signs wrong', wtrc_dumr(i,k,3) ,wtrc_dumr(i,k,3)+ wtrc_dumr(i,k,4) , wtrc_dumr(i,k,1)
-                    !   call endrun('dumr sign wrong')
-                    ! endif
-                    ! if (wtrc_dumi(i,k,3) * wtrc_dumi(i,k,1) .lt. 0._r8) then
-                    !   write(iulog,*) 'dumi signs wrong', wtrc_dumi(i,k,3) , wtrc_dumi(i,k,3)+ wtrc_dumi(i,k,4) ,wtrc_dumi(i,k,1)
-                    !   call endrun('dumi sign wrong')
-                    ! endif
-                    ! if (wtrc_dums(i,k,3) * wtrc_dums(i,k,1) .lt. 0._r8) then
-                    !   write(iulog,*) 'dums signs wrong', wtrc_dums(i,k,3) , wtrc_dums(i,k,3)+ wtrc_dums(i,k,4) ,wtrc_dums(i,k,1)
-                    !   call endrun('dums sign wrong')
-                    ! endif
                 endif
 
                 ! impose minimum droplet number conc (in-cloud) 
@@ -2625,22 +2431,6 @@ subroutine micro_mg_tend ( &
                         wtrc_dumi(i,k,m) = (wtrc_qi(i,k,m)+wtrc_qitend(i,k,m)*deltat)
                         wtrc_dumr(i,k,m) = (wtrc_qr(i,k,m)+wtrc_qrtend(i,k,m)*deltat)
                         wtrc_dums(i,k,m) = (wtrc_qs(i,k,m)+wtrc_qstend(i,k,m)*deltat)
-                        ! if (wtrc_dumc(i,k,m) .lt. 0) then
-                        !   write(iulog,*) wtrc_qc(i,k,m), wtrc_dumc(i,k,m), wtrc_qctend(i,k,m), m 
-                        !   call endrun('dumc < 0')
-                        ! endif
-                        ! if (wtrc_dumi(i,k,m) .lt. 0) then
-                        !   write(iulog,*) wtrc_qi(i,k,m), wtrc_dumi(i,k,m), wtrc_qitend(i,k,m), m 
-                        !   call endrun('dumi < 0')
-                        ! endif
-                        ! if (wtrc_dumr(i,k,m) .lt. 0) then
-                        !   write(iulog,*) wtrc_qr(i,k,m), wtrc_dumr(i,k,m), wtrc_qrtend(i,k,m), m 
-                        !   call endrun('dumr < 0')
-                        ! endif
-                        ! if (wtrc_dums(i,k,m) .lt. 0) then
-                        !   write(iulog,*) wtrc_qs(i,k,m), wtrc_dums(i,k,m), wtrc_qstend(i,k,m), m 
-                        !   call endrun('dums < 0')
-                        ! endif
                       enddo
                       do m = 1, wtrc_nwset
                         ice_ratio_array(i,k,m) = wtrc_ratio(m,wtrc_dumi(i,k,m),wtrc_dumi(i,k,1))
@@ -2649,22 +2439,6 @@ subroutine micro_mg_tend ( &
                         snow_ratio_array(i,k,m) = wtrc_ratio(m,wtrc_dums(i,k,m),wtrc_dums(i,k,1))
                     enddo
 
-                ! if (wtrc_dumc(i,k,3) * wtrc_dumc(i,k,1) .lt. 0._r8) then
-                !   write(iulog,*) 'dumc signs wrong', wtrc_dumc(i,k,3) , wtrc_dumc(i,k,1)
-                !   call endrun('dumc sign wrong')
-                ! endif
-                ! if (wtrc_dumr(i,k,3) * wtrc_dumr(i,k,1) .lt. 0._r8) then
-                !   write(iulog,*) 'dumr signs wrong', wtrc_dumr(i,k,3) , wtrc_dumr(i,k,1)
-                !   call endrun('dumr sign wrong')
-                ! endif
-                ! if (wtrc_dumi(i,k,3) * wtrc_dumi(i,k,1) .lt. 0._r8) then
-                !   write(iulog,*) 'dumi signs wrong', wtrc_dumi(i,k,3) , wtrc_dumi(i,k,1)
-                !   call endrun('dumi sign wrong')
-                ! endif
-                ! if (wtrc_dums(i,k,3) * wtrc_dums(i,k,1) .lt. 0._r8) then
-                !   write(iulog,*) 'dums signs wrong', wtrc_dums(i,k,3) , wtrc_dums(i,k,1)
-                !   call endrun('dums sign wrong')
-                ! endif
                 endif
 
 
@@ -2799,7 +2573,6 @@ subroutine micro_mg_tend ( &
                     enddo
                 endif
                 
-                if (wtrc_prect(i,3) .lt. 0.0_r8) call endrun('wtprec < 0 - 1st update')
                 
 
 
@@ -2900,7 +2673,6 @@ subroutine micro_mg_tend ( &
                         wtrc_prect(i,m) = wtrc_prect(i,m)+max(wtrc_faloutc(nlev,m)/g/real(nstep)/1000._r8, 0._r8)
                     enddo
                 endif
-                if (wtrc_prect(i,3) .lt. 0.0_r8) call endrun('wtprec < 0 - 2st update')
             end do
 
             ! calculate number of split time steps to ensure courant stability criteria
@@ -2970,10 +2742,6 @@ subroutine micro_mg_tend ( &
                         wtrc_dumr(i,k,m) = wtrc_dumr(i,k,m)-wtrc_faltndr(m)*deltat/real(nstep)
                        enddo
                     endif
-                    ! if (wtrc_dumr(i,k,3) * wtrc_dumr(i,k,1) .lt. 0._r8) then
-                    !   write(iulog,*) 'dumr signs wrong', wtrc_dumr(i,k,3) , wtrc_dumr(i,k,1),wtrc_faltndr(3),wtrc_faltndr(1)
-                    !   call endrun('dumr sign wrong')
-                    ! endif
 
                 end do
 
@@ -2989,11 +2757,6 @@ subroutine micro_mg_tend ( &
                         wtrc_prect(i,m) = wtrc_prect(i,m)+max(wtrc_faloutr(nlev,m)/g/real(nstep)/1000._r8, 0._r8)
                     enddo
                 endif
-                if (wtrc_prect(i,3) .lt. 0.0_r8) then
-                  write(iulog, *) wtrc_prect(i,3), wtrc_prect(i,1), prect(i), wtrc_faloutr(nlev,3), wtrc_faloutr(nlev,1), faloutr(nlev)
-                  call endrun('wtprec < 0 - 3st update')
-                endif
-
 
             end do
 
@@ -3082,7 +2845,6 @@ subroutine micro_mg_tend ( &
                         wtrc_preci(i,m) = wtrc_preci(i,m)+max(wtrc_falouts(nlev,m)/g/real(nstep)/1000._r8, 0._r8)
                     enddo
                 endif
-                if (wtrc_prect(i,3) .lt. 0.0_r8) call endrun('wtprec < 0 - 4st update')
 
 
             end do   !! nstep loop
@@ -3212,10 +2974,6 @@ subroutine micro_mg_tend ( &
                         wtrc_qrtend(i,k,m)=wtrc_qrtend(i,k,m)-dum*wtrc_dumr(i,k,m)/deltat
                       enddo
                     endif
-                    ! if (abs(wtrc_qrtend(i,k,2) - wtrc_qrtend(i,k,1)*0.5_r8) .gt. 1.e-24) then
-                    !   write(iulog, *) 'qrtend error', wtrc_qrtend(i,k,2) , wtrc_qrtend(i,k,1)*0.5_r8
-                    !   call endrun('qrtend error')
-                    ! endif
 
                     ! get mean size of rain = 1/lamr, add frozen rain to either snow or cloud ice
                     ! depending on mean rain size
@@ -3232,10 +2990,6 @@ subroutine micro_mg_tend ( &
                             enddo
                         endif
 
-        ! if (abs(wtrc_qstend(i,k,2) - wtrc_qstend(i,k,1)*0.5_r8) .gt. 1.e-24) then
-        !   write(iulog, *) 'qstend error', wtrc_qstend(i,k,2) , wtrc_qstend(i,k,1)*0.5_r8
-        !   call endrun('qstend error')
-        ! endif
                     else
                         qitend(i,k)=qitend(i,k)+dum*dumr(i,k)/deltat
                         nitend(i,k)=nitend(i,k)+dum*dumnr(i,k)/deltat
@@ -3245,10 +2999,6 @@ subroutine micro_mg_tend ( &
                             wtrc_qitend(i,k,m)=wtrc_qitend(i,k,m)+dum*wtrc_dumr(i,k,m)/deltat
                             enddo
                         endif
-                        ! if (abs(wtrc_qitend(i,k,2) - wtrc_qitend(i,k,1)*0.5_r8) .gt. 1.e-24) then
-                        !   write(iulog, *) 'qitend error', wtrc_qitend(i,k,2) , wtrc_qitend(i,k,1)*0.5_r8
-                        !   call endrun('qitend error')
-                        ! endif
                         !Water tracers:
                         wtfri_post(i,k) = 1._r8
                     end if
@@ -3287,15 +3037,7 @@ subroutine micro_mg_tend ( &
                                 wtrc_qctend(i,k,m)=wtrc_qctend(i,k,m)+dum*wtrc_dumi(i,k,m)/deltat
                             enddo
                         endif
-                        ! do k=1,nlev
-                        !   do i = 1, mgncol
-                            ! if (abs(wtrc_qctend(i,k,2) - wtrc_qctend(i,k,1)*0.5_r8) .gt. 1.e-24) then
-                            !   write(iulog, *) 'qctend error', wtrc_qctend(i,k,2) , wtrc_qctend(i,k,1)*0.5_r8
-                            !   call endrun('qctend error')
-                            ! endif
-                            endif
-                        !   enddo
-                        ! enddo
+                    endif
 
                         ! for output
                         melttot(i,k)=dum*dumi(i,k)/deltat
@@ -3312,10 +3054,6 @@ subroutine micro_mg_tend ( &
                                 wtrc_qitend(i,k,m)=((1._r8-dum)*wtrc_dumi(i,k,m)-wtrc_qi(i,k,m))/deltat
                             enddo
                         endif
-                        ! if (abs(wtrc_qitend(i,k,2) - wtrc_qitend(i,k,1)*0.5_r8) .gt. 1.e-24) then
-                        !   write(iulog, *) 'qitend error', wtrc_qitend(i,k,2) , wtrc_qitend(i,k,1)*0.5_r8
-                        !   call endrun('qitend error')
-                        ! endif
 
                         nitend(i,k)=((1._r8-dum)*dumni(i,k)-ni(i,k))/deltat
                         tlat(i,k)=tlat(i,k)-xlf*dum*dumi(i,k)/deltat
@@ -3350,10 +3088,6 @@ subroutine micro_mg_tend ( &
                             enddo
                         endif
 
-                    ! if (abs(wtrc_qitend(i,k,2) - wtrc_qitend(i,k,1)*0.5_r8) .gt. 1.e-24) then
-                    !   write(iulog, *) 'qitend error', wtrc_qitend(i,k,2) , wtrc_qitend(i,k,1)*0.5_r8
-                    !   call endrun('qitend error')
-                    ! endif
                         ! for output
                         homotot(i,k)=dum*dumc(i,k)/deltat
 
@@ -3367,14 +3101,6 @@ subroutine micro_mg_tend ( &
                                 wtrc_qctend(i,k,m)=((1._r8-dum)*wtrc_dumc(i,k,m)-wtrc_qc(i,k,m))/deltat
                             enddo
                         endif
-                        ! do k=1,nlev
-                        !   do i = 1, mgncol
-                            ! if (abs(wtrc_qctend(i,k,2) - wtrc_qctend(i,k,1)*0.5_r8) .gt. 1.e-24) then
-                            !   write(iulog, *) 'qctend error', wtrc_qctend(i,k,2) , wtrc_qctend(i,k,1)*0.5_r8
-                            !   call endrun('qctend error')
-                            ! endif
-                        !   enddo
-                        ! enddo
                         nctend(i,k)=((1._r8-dum)*dumnc(i,k)-nc(i,k))/deltat
                         tlat(i,k)=tlat(i,k)+xlf*dum*dumc(i,k)/deltat
                         !++AG water tracers:
@@ -3434,29 +3160,6 @@ subroutine micro_mg_tend ( &
                             wtrc_qitend(i,k,m)=wtrc_qitend(i,k,m)+dum*dum1*vap_ratio_array(i,k,m)
                             wtrc_qvlat(i,k,m)=wtrc_qvlat(i,k,m)-dum*vap_ratio_array(i,k,m)
                         enddo
-
-                        
-                            ! if (abs(wtrc_qvlat(i,k,2) - wtrc_qvlat(i,k,1)*0.5_r8) .gt. 1.e-24) then
-                            !   write(iulog, *) 'qvlat error', wtrc_qvlat(i,k,2) , wtrc_qvlat(i,k,1)*0.5_r8
-                            !   call endrun('qvlat error')
-                            ! endif
-                            ! if (abs(wtrc_qctend(i,k,2) - wtrc_qctend(i,k,1)*0.5_r8) .gt. 1.e-24) then
-                            !   write(iulog, *) 'qctend error', wtrc_qctend(i,k,2) , wtrc_qctend(i,k,1)*0.5_r8
-                            !   call endrun('qctend error')
-                            ! endif
-                            ! if (abs(wtrc_qitend(i,k,2) - wtrc_qitend(i,k,1)*0.5_r8) .gt. 1.e-24) then
-                            !   write(iulog, *) 'qitend error', wtrc_qitend(i,k,2) , wtrc_qitend(i,k,1)*0.5_r8
-                            !   call endrun('qitend error')
-                            ! endif
-                            ! if (abs(wtrc_qrtend(i,k,2) - wtrc_qrtend(i,k,1)*0.5_r8) .gt. 1.e-24) then
-                            !   write(iulog, *) 'qrtend error', wtrc_qrtend(i,k,2) , wtrc_qrtend(i,k,1)*0.5_r8
-                            !   call endrun('qrtend error')
-                            ! endif
-                            ! if (abs(wtrc_qstend(i,k,2) - wtrc_qstend(i,k,1)*0.5_r8) .gt. 1.e-24) then
-                            !   write(iulog, *) 'qstend error', wtrc_qstend(i,k,2) , wtrc_qstend(i,k,1)*0.5_r8
-                            !   call endrun('qstend error')
-                            ! endif
-
                 end if
             end if
 
@@ -3487,11 +3190,8 @@ subroutine micro_mg_tend ( &
                 enddo
                 do m=1, wtrc_nwset
                     liq_ratio_array(i,k,m) = wtrc_ratio(m,wtrc_dumc(i,k,m),wtrc_dumc(i,k,1))
-
                     ice_ratio_array(i,k,m) = wtrc_ratio(m,wtrc_dumi(i,k,m),wtrc_dumi(i,k,1))
-
                     rain_ratio_array(i,k,m) = wtrc_ratio(m,wtrc_dumr(i,k,m),wtrc_dumr(i,k,1))
-
                     snow_ratio_array(i,k,m) = wtrc_ratio(m,wtrc_dums(i,k,m),wtrc_dums(i,k,1))
                 enddo
             endif
@@ -3820,31 +3520,6 @@ subroutine micro_mg_tend ( &
     elsewhere
         nfice=0._r8
     end where
-
-    ! do k=1,nlev
-    !   do i = 1, mgncol
-    !     if (abs(wtrc_qvlat(i,k,2) - wtrc_qvlat(i,k,1)*0.5_r8) .gt. 1.e-24) then
-    !       write(iulog, *) 'qvlat error', wtrc_qvlat(i,k,2) , wtrc_qvlat(i,k,1)*0.5_r8
-    !       call endrun('qvlat error')
-    !     endif
-    !     if (abs(wtrc_qctend(i,k,2) - wtrc_qctend(i,k,1)*0.5_r8) .gt. 1.e-24) then
-    !       write(iulog, *) 'qctend error', wtrc_qctend(i,k,2) , wtrc_qctend(i,k,1)*0.5_r8
-    !       call endrun('qctend error')
-    !     endif
-    !     if (abs(wtrc_qitend(i,k,2) - wtrc_qitend(i,k,1)*0.5_r8) .gt. 1.e-24) then
-    !       write(iulog, *) 'qitend error', wtrc_qitend(i,k,2) , wtrc_qitend(i,k,1)*0.5_r8
-    !       call endrun('qitend error')
-    !     endif
-    !     if (abs(wtrc_qrtend(i,k,2) - wtrc_qrtend(i,k,1)*0.5_r8) .gt. 1.e-24) then
-    !       write(iulog, *) 'qrtend error', wtrc_qrtend(i,k,2) , wtrc_qrtend(i,k,1)*0.5_r8
-    !       call endrun('qrtend error')
-    !     endif
-    !     if (abs(wtrc_qstend(i,k,2) - wtrc_qstend(i,k,1)*0.5_r8) .gt. 1.e-24) then
-    !       write(iulog, *) 'qstend error', wtrc_qstend(i,k,2) , wtrc_qstend(i,k,1)*0.5_r8
-    !       call endrun('qstend error')
-    !     endif
-    !   enddo
-    ! enddo
 
 end subroutine micro_mg_tend
 

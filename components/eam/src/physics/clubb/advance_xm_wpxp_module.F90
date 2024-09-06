@@ -10,7 +10,6 @@ module advance_xm_wpxp_module
   ! None
   !-----------------------------------------------------------------------
     use cam_logfile, only: iulog
-    use cam_abortutils, only: endrun
   implicit none
 
   private ! Default scope
@@ -1028,12 +1027,6 @@ module advance_xm_wpxp_module
             enddo
             wtrc_rtm_old = wtrc_rtm
         endif
-        do k = 1, gr%nz
-            if (abs( wtrc_rtm(k,1) - rtm(k)) .gt. 1e-12) then
-                ! write(iulog, *) ' RTM error', wtrc_rtm(k,1), rtm(k)
-                ! call endrun('RTM error')
-            endif
-        enddo
 
       if ( clubb_at_least_debug_level( 0 ) ) then
          if ( err_code == clubb_fatal_error ) then
@@ -1717,12 +1710,6 @@ module advance_xm_wpxp_module
             wtrc_rtm_old = wtrc_rtm
         endif
 
-        do k = 1, gr%nz
-            if (abs( wtrc_rtm(k,1) - rtm(k)) .gt. 1e-12) then
-                ! write(iulog, *) ' RTM error', wtrc_rtm(k,1), rtm(k)
-                ! call endrun('RTM error')
-            endif
-        enddo
 
       if ( clubb_at_least_debug_level( 0 ) ) then
          if ( err_code == clubb_fatal_error ) then
@@ -1978,12 +1965,6 @@ module advance_xm_wpxp_module
             wtrc_rtm_old = wtrc_rtm
         endif
 
-        do k = 1, gr%nz
-            if (abs( wtrc_rtm(k,1) - rtm(k)) .gt. 1e-12) then
-                ! write(iulog, *) ' RTM error', wtrc_rtm(k,1), rtm(k)
-                ! call endrun('RTM error')
-            endif
-        enddo
 
        if ( l_stats_samp ) then
           call stat_end_update( irtm_sdmp, rtm / dt, stats_zt )

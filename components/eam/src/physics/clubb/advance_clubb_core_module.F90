@@ -104,8 +104,6 @@ module advance_clubb_core_module
 
   use cam_logfile, only: iulog
 
-  use cam_abortutils, only: endrun
-
   implicit none
 
   public ::  &
@@ -1056,12 +1054,6 @@ module advance_clubb_core_module
     
     endif ! ipdf_call_placement == ipdf_pre_advance_fields
           ! or ipdf_call_placement == ipdf_pre_post_advance_fields
-    do k = 1, gr%nz
-        if (abs( wtrc_rtm(k,1) - rtm(k)) .gt. 1e-12) then
-            ! write(iulog, *) ' RTM error', wtrc_rtm(k,1), rtm(k)
-            ! call endrun('RTM error')
-        endif
-    enddo
     ! Interpolate wp3 to momentum levels, and wp2 to thermodynamic levels
     ! and then compute Skw for m & t grid.
     wp2_zt = max( zm2zt( wp2 ), w_tol_sqd ) ! Positive definite quantity
@@ -1599,11 +1591,6 @@ module advance_clubb_core_module
                             rtm, wtrc_rtm, wprtp, thlm, wpthlp,                        & ! intent(inout)
                             sclrm, wpsclrp, um, upwp, vm, vpwp,              & ! intent(inout)
                             um_pert, vm_pert, upwp_pert, vpwp_pert)            ! intent(inout)
-    do k = 1, gr%nz
-        if (abs( wtrc_rtm(k,1) - rtm(k)) .gt. 1e-12) then
-            ! write(iulog, *) ' RTM error', wtrc_rtm(k,1), rtm(k)
-            ! call endrun('RTM error')
-        endif
     enddo
       if ( clubb_at_least_debug_level( 0 ) ) then
           if ( err_code == clubb_fatal_error ) then
@@ -1629,12 +1616,6 @@ module advance_clubb_core_module
          enddo
          wtrc_rcm_old = wtrc_rcm
     endif
-    do k = 1, gr%nz
-        if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
-            ! write(iulog, *) ' RcM error', wtrc_rcm(k,1), rcm(k)
-            ! call endrun('RcM error')
-        endif
-    enddo
 
     ! Insert rcm calculation here.
 
@@ -1957,43 +1938,8 @@ module advance_clubb_core_module
                                 pdf_implicit_coefs_terms )       ! Intent(out)
 
 
-                                do k = 1, gr%nz
-                                    if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
-                                        ! write(iulog, *) ' RCM error', wtrc_rcm(k,1), rcm(k)
-                                        ! call endrun('RCM error')
-                                    endif
-                            
-                                    if (abs( wtrc_rcm(k,1)/2. - wtrc_rcm(k,2)) .gt. 1e-12) then
-                                        ! write(iulog, *) ' RCM error', wtrc_rcm(k,1)/2., wtrc_rcm(k,2)
-                                        ! call endrun('RCM error')
-                                    endif
-                                enddo
-                        
-                                do k = 1, gr%nz
-                                    if (abs( wtrc_rcm_zm(k,1) - rcm_zm(k)) .gt. 1e-12) then
-                                        ! write(iulog, *) ' Rcm_zm error', wtrc_rcm_zm(k,1), rcm_zm(k)
-                                        ! call endrun('Rcm_zm error')
-                                    endif
-                            
-                                    if (abs( wtrc_rcm_zm(k,1)/2. - wtrc_rcm_zm(k,2)) .gt. 1e-12) then
-                                        ! write(iulog, *) ' Rcm_zm error', wtrc_rcm_zm(k,1)/2., wtrc_rcm_zm(k,2)
-                                        ! call endrun('Rcm_zm error')
-                                    endif
-                                enddo
-
     endif ! ipdf_call_placement == ipdf_post_advance_fields
           ! or ipdf_call_placement == ipdf_pre_post_advance_fields
-
-    do k = 1, gr%nz
-        if (abs( wtrc_rtm(k,1) - rtm(k)) .gt. 1e-12) then
-            ! write(iulog, *) ' RTM error', wtrc_rtm(k,1), rtm(k)
-            ! call endrun('RTM error')
-        endif
-        if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
-            ! write(iulog, *) ' RCM error', wtrc_rcm(k,1), rcm(k)
-            ! call endrun('RCM error')
-        endif
-    enddo
 
 #ifdef CLUBB_CAM
       qclvar(:) = rcp2_zt(:)
@@ -2877,20 +2823,6 @@ module advance_clubb_core_module
            wpsclrpthlp, sclrprcp_zt, wp2sclrp,             & ! intent(out)
            rc_coef                                         ) ! intent(out)
 
-           do k = 1, gr%nz
-            if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
-                ! write(iulog, *) ' RCM error', wtrc_rcm(k,1), rcm(k)
-                ! call endrun('RCM error')
-            endif
-        enddo
-
-        do k = 1, gr%nz
-            if (abs( wtrc_rtm(k,1) - rtm(k)) .gt. 1e-12) then
-                ! write(iulog, *) ' RtM error', wtrc_rtm(k,1), rtm(k)
-                ! call endrun('RtM error')
-            endif
-        enddo
-
     ! Subroutine may produce NaN values, and if so, return
     if ( clubb_at_least_debug_level( 0 ) ) then
        if ( err_code == clubb_fatal_error ) then
@@ -3016,29 +2948,6 @@ module advance_clubb_core_module
          enddo
       endif
 
-      do k = 1, gr%nz
-        if (abs( wtrc_rtm(k,1) - rtm(k)) .gt. 1e-12) then
-            ! write(iulog, *) ' RtM error', wtrc_rtm(k,1), rtm(k)
-            ! call endrun('RtM error')
-        endif
-
-        if (abs( wtrc_rtm(k,1)/2. - wtrc_rtm(k,2)) .gt. 1e-12) then
-            ! write(iulog, *) ' RtM error', wtrc_rtm(k,1)/2., wtrc_rtm(k,2)
-            ! call endrun('RtM error')
-        endif
-    enddo
-
-    do k = 1, gr%nz
-        if (abs( wtrc_rtm_zm(k,1) - rtm_zm(k)) .gt. 1e-12) then
-            ! write(iulog, *) ' RtM_zm error', wtrc_rtm_zm(k,1), rtm_zm(k)
-            ! call endrun('RtM_zm error')
-        endif
-
-        if (abs( wtrc_rtm_zm(k,1)/2. - wtrc_rtm_zm(k,2)) .gt. 1e-12) then
-            ! write(iulog, *) ' RtM_zm error', wtrc_rtm_zm(k,1)/2., wtrc_rtm_zm(k,2)
-            ! call endrun('RtM_zm error')
-        endif
-    enddo
 
       thlm_zm = zt2zm( thlm )
       ! Clip if extrapolation at the top level causes thlm_zm to be < thl_tol
@@ -3086,29 +2995,6 @@ module advance_clubb_core_module
              rc_coef_zm                                            ) ! intent(out)
 
 
-             do k = 1, gr%nz
-                if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
-                    ! write(iulog, *) ' RCM error', wtrc_rcm(k,1), rcm(k)
-                    ! call endrun('RCM error')
-                endif
-        
-                if (abs( wtrc_rcm(k,1)/2. - wtrc_rcm(k,2)) .gt. 1e-12) then
-                    ! write(iulog, *) ' RCM error', wtrc_rcm(k,1)/2., wtrc_rcm(k,2)
-                    ! call endrun('RCM error')
-                endif
-            enddo
-
-            do k = 1, gr%nz
-                if (abs( wtrc_rcm_zm(k,1) - rcm_zm(k)) .gt. 1e-12) then
-                    ! write(iulog, *) ' RCM_zm error', wtrc_rcm_zm(k,1), rcm_zm(k)
-                    ! call endrun('RCM_zm error')
-                endif
-        
-                if (abs( wtrc_rcm_zm(k,1)/2. - wtrc_rcm_zm(k,2)) .gt. 1e-12) then
-                    ! write(iulog, *) ' RCM_zm error', wtrc_rcm_zm(k,1)/2., wtrc_rcm_zm(k,2)
-                    ! call endrun('RCM_zm error')
-                endif
-            enddo
 
       ! Subroutine may produce NaN values, and if so, return
       if ( clubb_at_least_debug_level( 0 ) ) then
@@ -3189,42 +3075,6 @@ module advance_clubb_core_module
     ! thermodynamic-level variables output from pdf_closure.
     ! ldgrant June 2009
 
-    do k = 1, gr%nz
-        if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
-            ! write(iulog, *) ' RCM error', wtrc_rcm(k,1), rcm(k)
-            ! call endrun('RCM error')
-        endif
-
-        if (abs( wtrc_rcm(k,1)/2. - wtrc_rcm(k,2)) .gt. 1e-12) then
-            ! write(iulog, *) ' RCM error', wtrc_rcm(k,1)/2., wtrc_rcm(k,2)
-            ! call endrun('RCM error')
-        endif
-    enddo
-
-
-    do k = 1, gr%nz
-        if (abs( wtrc_rcm_zm(k,1) - rcm_zm(k)) .gt. 1e-12) then
-            ! write(iulog, *) ' RCM_zm error', wtrc_rcm_zm(k,1), rcm_zm(k)
-            ! call endrun('RCM_zm error')
-        endif
-
-        if (abs( wtrc_rcm_zm(k,1)/2. - wtrc_rcm_zm(k,2)) .gt. 1e-12) then
-            ! write(iulog, *) ' RCM_zm error', wtrc_rcm_zm(k,1)/2., wtrc_rcm_zm(k,2)
-            ! call endrun('RCM_zm error')
-        endif
-    enddo
-
-    do k = 1, gr%nz
-        if (abs( wtrc_rtm_zm(k,1) - rtm_zm(k)) .gt. 1e-12) then
-            ! write(iulog, *) ' rtm_zm error', wtrc_rtm_zm(k,1), rtm_zm(k)
-            ! call endrun('rtm_zm error')
-        endif
-
-        if (abs( wtrc_rtm_zm(k,1)/2. - wtrc_rtm_zm(k,2)) .gt. 1e-12) then
-            ! write(iulog, *) ' rtm_zm error', wtrc_rtm_zm(k,1)/2., wtrc_rtm_zm(k,2)
-            ! call endrun('rtm_zm error')
-        endif
-    enddo
     if ( l_trapezoidal_rule_zt ) then
       call trapezoidal_rule_zt &
            ( l_call_pdf_closure_twice,                    & ! intent(in)
@@ -3270,16 +3120,6 @@ module advance_clubb_core_module
          wtrc_rcm_old = wtrc_rcm
     endif
 
-    do k = 1, gr%nz
-        if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
-            ! write(iulog, *) ' RCM total error', wtrc_rcm(k,1), rcm(k)
-            ! call endrun('RCM total error')
-        endif
-        if (abs( wtrc_rcm(k,2) - wtrc_rcm(k,1)/2.) .gt. 1e-8) then
-            ! write(iulog, *) ' RCM error', wtrc_rcm(k,2), wtrc_rcm(k,1)/2.
-            ! call endrun('RCM error')
-        endif
-    enddo
 
 ! insert wtrc_rcm change here
 
@@ -3301,17 +3141,6 @@ module advance_clubb_core_module
       endif
     end if
 
-    do k = 1, gr%nz
-        if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
-            ! write(iulog, *) ' RCM error', wtrc_rcm(k,1), rcm(k)
-            ! call endrun('RCM error')
-        endif
-
-        if (abs( wtrc_rcm(k,1)/2. - wtrc_rcm(k,2)) .gt. 1e-12) then
-            ! write(iulog, *) ' RCM error', wtrc_rcm(k,1)/2., wtrc_rcm(k,2)
-            ! call endrun('RCM error')
-        endif
-    enddo
 
 
     ! Clip cloud fraction here if it still exceeds 1.0 due to round off
@@ -3483,17 +3312,6 @@ module advance_clubb_core_module
 
       rcm_supersat_adj = zero
 
-      do k = 1, gr%nz
-        if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
-            ! write(iulog, *) ' RCM error', wtrc_rcm(k,1), rcm(k)
-            ! call endrun('RCM error')
-        endif
-
-        if (abs( wtrc_rcm(k,1)/2. - wtrc_rcm(k,2)) .gt. 1e-12) then
-            ! write(iulog, *) ' RCM error', wtrc_rcm(k,1)/2., wtrc_rcm(k,2)
-            ! call endrun('RCM error')
-        endif
-    enddo
       if ( l_rcm_supersat_adj ) then
         ! +PAB mods, take remaining supersaturation that may exist
         !   after CLUBB PDF call and add it to rcm.  Supersaturation
@@ -3521,17 +3339,6 @@ module advance_clubb_core_module
 
       end if ! l_rcm_supersat_adj
 
-      do k = 1, gr%nz
-        if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
-            ! write(iulog, *) ' RCM error', wtrc_rcm(k,1), rcm(k)
-            ! call endrun('RCM error')
-        endif
-
-        if (abs( wtrc_rcm(k,1)/2. - wtrc_rcm(k,2)) .gt. 1e-12) then
-            ! write(iulog, *) ' RCM error', wtrc_rcm(k,1)/2., wtrc_rcm(k,2)
-            ! call endrun('RCM error')
-        endif
-    enddo
 
 
     return
@@ -4343,27 +4150,6 @@ module advance_clubb_core_module
           alpha_rt_zm       = pdf_params_zm%alpha_rt
         end if
 
-    !     if (trace_water) then
-    !         do m = 1, wtrc_nwset
-    !             wtrc_rcm_zm(:,m) = zt2zm( wtrc_rcm(:,m) )
-    !             wtrc_rcm_zm(gr%nz, m) = 0.0_core_rknd
-    !         enddo
-    !    endif
-
-       do k = 1, gr%nz
-        if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
-        !   write(iulog, *) ' RCM total error', wtrc_rcm(k,1), rcm(k)
-        !   call endrun('RCM  total error')
-      endif
-      if (abs( wtrc_rcm(k,2) - wtrc_rcm(k,1)/2.) .gt. 1e-8) then
-        !   write(iulog, *) ' RCM error', wtrc_rcm(k,2), wtrc_rcm(k,1)/2.
-        !   call endrun('RCM error')
-      endif
-      if (abs( wtrc_rcm_zm(k,1) - rcm_zm(k)) .gt. 1e-12) then
-        ! write(iulog, *) ' RCM_zm total error', wtrc_rcm_zm(k,1), rcm_zm(k), wtrc_rcm(k,1), rcm(k)
-        ! call endrun('RCM_zm  total error')
-    endif
-  enddo
 
       else
 
@@ -4384,17 +4170,6 @@ module advance_clubb_core_module
         rcm_zm(gr%nz)        = 0.0_core_rknd
         wp2thvp_zm             = zt2zm( wp2thvp )
         wp2thvp_zm(gr%nz)    = 0.0_core_rknd
-        ! wtrc_rcm_zm = 0.0_core_rknd
-        do k = 1, gr%nz
-            if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
-            !   write(iulog, *) ' RCM total error', wtrc_rcm(k,1), rcm(k)
-            !   call endrun('RCM  total error')
-          endif
-          if (abs( wtrc_rcm(k,2) - wtrc_rcm(k,1)/2.) .gt. 1e-8) then
-            !   write(iulog, *) ' RCM error', wtrc_rcm(k,2), wtrc_rcm(k,1)/2.
-            !   call endrun('RCM error')
-          endif
-      enddo
 
         
 
@@ -4404,22 +4179,6 @@ module advance_clubb_core_module
                  wtrc_rcm_zm(gr%nz, m) = 0.0_core_rknd
              enddo
         endif
-
-        do k = 1, gr%nz
-            if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
-            !   write(iulog, *) ' RCM total error', wtrc_rcm(k,1), rcm(k)
-            !   call endrun('RCM  total error')
-          endif
-          if (abs( wtrc_rcm(k,2) - wtrc_rcm(k,1)/2.) .gt. 1e-8) then
-            !   write(iulog, *) ' RCM error', wtrc_rcm(k,2), wtrc_rcm(k,1)/2.
-            !   call endrun('RCM error')
-          endif
-          if (abs( wtrc_rcm_zm(k,1) - rcm_zm(k)) .gt. 1e-12) then
-            ! write(iulog, *) ' RCM_zm total error', wtrc_rcm_zm(k,1), rcm_zm(k), wtrc_rcm(k,1), rcm(k)
-            ! call endrun('RCM_zm  total error')
-        endif
-      enddo
-
         do i = 1, sclr_dim
           wpsclrprtp_zm(:,i)        = zt2zm( wpsclrprtp(:,i) )
           wpsclrprtp_zm(gr%nz,i)  = 0.0_core_rknd
@@ -4535,45 +4294,12 @@ module advance_clubb_core_module
       cloud_frac = trapezoid_zt( cloud_frac, cloud_frac_zm )
       ice_supersat_frac = trapezoid_zt( ice_supersat_frac, ice_supersat_frac_zm )
 
-do k = 1, gr%nz
-      if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
-        ! write(iulog, *) ' RCM total error', wtrc_rcm(k,1), rcm(k)
-        ! call endrun('RCM  total error')
-    endif
-    if (abs( wtrc_rcm_zm(k,1) - rcm_zm(k)) .gt. 1e-12) then
-        ! write(iulog, *) ' RCM_zm total error', wtrc_rcm_zm(k,1), rcm_zm(k), wtrc_rcm(k,1), rcm(k)
-        ! call endrun('RCM_zm  total error')
-    endif
-    if (abs( wtrc_rcm(k,2) - wtrc_rcm(k,1)/2.) .gt. 1e-8) then
-        ! write(iulog, *) ' RCM error', wtrc_rcm(k,2), wtrc_rcm(k,1)/2.
-        ! call endrun('RCM error')
-    endif
-    if (abs( wtrc_rcm_zm(k,2) - wtrc_rcm_zm(k,1)/2.) .gt. 1e-8) then
-        ! write(iulog, *) ' RCM error', wtrc_rcm_zm(k,2), wtrc_rcm_zm(k,1)/2.
-        ! call endrun('RCM error')
-    endif
-enddo
       rcm        = trapezoid_zt( rcm, rcm_zm )
       if (trace_water) then
          do m = 1, wtrc_nwset
              wtrc_rcm(:,m) = trapezoid_zt(wtrc_rcm(:,m), wtrc_rcm_zm(:,m))
          enddo
       endif
-
-      do k = 1, gr%nz
-        if (abs( wtrc_rcm_zm(k,1) - rcm_zm(k)) .gt. 1e-12) then
-        !   write(iulog, *) ' RCM_zm total error', wtrc_rcm_zm(k,1), rcm_zm(k)
-        !   call endrun('RCM_zm  total error')
-      endif
-      if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
-        ! write(iulog, *) ' RCM total error', wtrc_rcm(k,1), rcm(k)
-        ! call endrun('RCM  total error')
-    endif
-      if (abs( wtrc_rcm(k,2) - wtrc_rcm(k,1)/2.) .gt. 1e-8) then
-        !   write(iulog, *) ' RCM error', wtrc_rcm(k,2), wtrc_rcm(k,1)/2.
-        !   call endrun('RCM error')
-      endif
-  enddo
 
       
 
@@ -4866,14 +4592,6 @@ use water_tracer_vars, only: &
 
  do k = 1, gr%nz
 
-    if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
-        ! write(iulog, *) ' RCM total error', wtrc_rcm(k,1), rcm(k)
-        ! call endrun('RCM  total error')
-    endif
-    if (abs( wtrc_rcm(k,2) - wtrc_rcm(k,1)/2.) .gt. 1e-8) then
-        ! write(iulog, *) ' RCM error', wtrc_rcm(k,2), wtrc_rcm(k,1)/2.
-        ! call endrun('RCM error')
-    endif
 
    chi_mean(k) =      pdf_params%mixt_frac(k)  * pdf_params%chi_1(k) + &
                (1.0_core_rknd-pdf_params%mixt_frac(k)) * pdf_params%chi_2(k)
@@ -4894,14 +4612,6 @@ use water_tracer_vars, only: &
         enddo
      endif
 
-     if (abs( wtrc_rcm_in_layer(k,1) - rcm_in_layer(k)) .gt. 1e-12) then
-        ! write(iulog, *) ' RCM_in_layer total error', wtrc_rcm_in_layer(k,1), rcm_in_layer(k)
-        ! call endrun('RCM_in_layer  total error')
-    endif
-    if (abs( wtrc_rcm_in_layer(k,2) - wtrc_rcm_in_layer(k,1)/2.) .gt. 1e-8) then
-        ! write(iulog, *) ' RCM_in_layer error', wtrc_rcm_in_layer(k,2), wtrc_rcm_in_layer(k,1)/2.
-        ! call endrun('RCM_in_layer error')
-    endif
      ! Water tracers code block ends
 
    else if ( ( rcm(k+1) >= rc_tol ) .and. ( rcm(k-1) >= rc_tol ) ) then
@@ -4918,14 +4628,6 @@ use water_tracer_vars, only: &
         enddo
      endif
 
-     if (abs( wtrc_rcm_in_layer(k,1) - rcm_in_layer(k)) .gt. 1e-12) then
-        ! write(iulog, *) ' RCM_in_layer error', wtrc_rcm_in_layer(k,1), rcm_in_layer(k)
-        ! call endrun('RCM_in_layer error')
-    endif
-    if (abs( wtrc_rcm_in_layer(k,2) - wtrc_rcm_in_layer(k,1)/2.) .gt. 1e-8) then
-        ! write(iulog, *) ' RCM_in_layer error', wtrc_rcm_in_layer(k,2), wtrc_rcm_in_layer(k,1)/2.
-        ! call endrun('RCM_in_layer error')
-    endif
      ! Water tracers code block ends
 
    else if ( ( rcm(k+1) < rc_tol ) .or. ( rcm(k-1) < rc_tol) ) then
@@ -4993,14 +4695,6 @@ use water_tracer_vars, only: &
         enddo
      endif
 
-     if (abs( wtrc_rcm_in_layer(k,1) - rcm_in_layer(k)) .gt. 1e-12) then
-        ! write(iulog, *) ' RCM_in_layer error', wtrc_rcm_in_layer(k,1), rcm_in_layer(k)
-        ! call endrun('RCM_in_layer error')
-    endif
-    if (abs( wtrc_rcm_in_layer(k,2) - wtrc_rcm_in_layer(k,1)/2.) .gt. 1e-8) then
-        ! write(iulog, *) ' RCM_in_layer error', wtrc_rcm_in_layer(k,2), wtrc_rcm_in_layer(k,1)/2.
-        ! call endrun('RCM_in_layer error')
-    endif
      ! Water tracers code block ends
 
    else

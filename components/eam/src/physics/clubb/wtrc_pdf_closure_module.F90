@@ -3,7 +3,6 @@
 !===============================================================================
 module wtrc_pdf_closure_module
     use cam_logfile, only: iulog
-    use cam_abortutils, only: endrun
 
   implicit none
 
@@ -950,16 +949,6 @@ module wtrc_pdf_closure_module
     endif
     wtrc_rcm_old = wtrc_rcm
 
-    do k = 1, gr%nz
-        if (abs( wtrc_rtm(k,1) - rtm(k)) .gt. 1e-12) then
-            ! write(iulog, *) ' RTM error', wtrc_rtm(k,1), rtm(k)
-            ! call endrun('RTM error')
-        endif
-        if (abs( wtrc_rcm(k,1) - rcm(k)) .gt. 1e-12) then
-            ! write(iulog, *) ' rcm error', wtrc_rcm(k,1), rcm(k)
-            ! call endrun('rcm error')
-        endif
-    enddo
 
     if ( iiPDF_type == iiPDF_ADG1 .or. iiPDF_type == iiPDF_ADG2 ) then
 

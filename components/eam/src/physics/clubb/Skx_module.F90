@@ -73,12 +73,6 @@ module Skx_module
     ! Calculation of skewness to help reduce the sensitivity of this value to
     ! small values of xp2.
 
-    if (ANY((xp2 + Skx_denom_tol) .lt. 1e-16)) then
-        write(iulog, *) 'xp2=', xp2
-        write(iulog, *) 'Skx_denom_tol', Skx_denom_tol
-        write(iulog, *) 'Skw_denom_coef', Skw_denom_coef
-        call endrun('Skx divide by 0')
-    endif
     Skx = xp3 / ( ( xp2 + Skx_denom_tol ) * sqrt( xp2 + Skx_denom_tol ) )
 
     ! This is no longer needed since clipping is already

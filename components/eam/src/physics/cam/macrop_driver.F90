@@ -581,7 +581,6 @@ end subroutine macrop_driver_readnl
   ! Local variables for water tracers/isotopes
   real(r8)              :: process_rates(pcols,pver,pwtype,pwtype,pwtype) ! Process rates (kg/kg/sec)
   integer               :: m                                              ! water set index
-  logical               :: isOk
   integer               :: iwtype
 
   real(r8) pqctn(pcols,pver)

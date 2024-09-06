@@ -17,9 +17,6 @@
 !
 module clubb_api_module
 
-    use cam_abortutils, only: endrun
-    use time_manager,   only: is_first_step
-
   use mt95, only : &
     assignment( = ), &
     genrand_state, & ! Internal representation of the RNG state.
