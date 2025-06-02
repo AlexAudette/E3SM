@@ -21,23 +21,23 @@
 - There should be a logical grouping among the variables and classes contained
   in a type, such that the name captures that association.
       - To demonstrate, consider the following `Fruit` class.
-  
+
           ```c++
           class Fruit {
             enum FruitName {Apple, Banana, Orange};
-          
+
             FruitName m_fruit_name;
-          
+
             void is_juiceable(FruitName fruit_) { ... };
-          
+
             enum Color {Red, Green, Blue};
-  
+
             Color fruit_color;
-          
+
             bool is_favorite_color(Color color_) { ... };
           };
           ```
-  
+
       - It would be better to break this into a separate `Fruit` and `Color`
         class because:
             1. `Color` is not inherently associated with fruits--it could also
@@ -46,7 +46,7 @@
                part of `Fruit`, since it would work the same way if it knew nothing
                about fruits.
 - Related to the previous guideline, types/classes/structs should ideally
-  _encapsulate **concepts**_ to improve both readability and usability.
+  encapsulate ***concepts*** to improve both readability and usability.
       - This implies that even a small struct has a reason to exist when it
         serves the goal of shrinking or simplifying the outer class.
       - An example of this in EAMxx is the

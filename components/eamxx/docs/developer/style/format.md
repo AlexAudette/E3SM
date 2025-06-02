@@ -52,4 +52,4 @@ The summary is in the main pane of the page with the title
 ***Actions*** link at the top of the E3SM repository page;
 select `eamxx-format` from the ***All workflows*** section of the ***Actions***
 sidebar; then choose the most recent run that is associated with your PR,
-which should be near the top of the list. 
+which should be near the top of the list.
