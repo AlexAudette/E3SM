@@ -38,7 +38,7 @@ will thank you for it!
             should explain ***why*** something is being done in the code,
             rather than ***what*** the code is doing.[^butwhattabout]
           - Comments should dispel confusion and not cause it.
-          - Comments should not duplicate the code.
+          - Comments should not duplicate the code.[^dupe]
           - Provide links or references when using code from elsewhere or
             whenever it is otherwise appropriate.
           - A bad comment is worse than no comment.
@@ -47,3 +47,9 @@ will thank you for it!
 [^butwhattabout]: An obvious exception to this is explaining complex or opaque
 parts of the code that cannot be made simpler--for instance, a clever arithmetic
 trick in a complicated interpolation scheme.
+[^dupe]: For example, this type of comment does not add any information and
+is unnecessary.
+    ```c++
+    // perform initialization
+    this->initialize();
+    ```
