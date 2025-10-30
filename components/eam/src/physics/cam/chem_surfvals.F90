@@ -305,7 +305,9 @@ subroutine ghg_ramp_read()
    character(len=256) :: locfn          ! netcdf local filename to open
 
    if (masterproc) then
-     call getfil (bndtvghg, locfn, 0)
+      call getfil (bndtvghg, locfn, 0)
+      write(iulog, *) 'GHG_RAMP_READ: FILENAME = ', locfn
+      !call endrun
      call handle_ncerr( nf90_open (trim(locfn), NF90_NOWRITE, ncid),subname,__LINE__)
 
      write(iulog,*)'GHG_RAMP_READ:  reading ramped greenhouse gas surface data from file ',trim(locfn)

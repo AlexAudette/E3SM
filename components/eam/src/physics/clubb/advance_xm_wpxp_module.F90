@@ -9,7 +9,6 @@ module advance_xm_wpxp_module
   ! References:
   ! None
   !-----------------------------------------------------------------------
-    use cam_logfile, only: iulog
   implicit none
 
   private ! Default scope

@@ -362,7 +362,6 @@ CONTAINS
 !
   subroutine atm2hub_alloc( cam_out )
 
-    use water_tracer_vars,  only: trace_water
 !
 !!USES:
 !
@@ -692,8 +691,6 @@ subroutine cam_export(state,cam_out,pbuf)
    use constituents,     only: pcnst
    use cam_control_mod,  only: rair
    use physics_buffer,   only: pbuf_get_index, pbuf_get_field, physics_buffer_desc
-   !water tracers:
-   use water_tracer_vars,only: trace_water
    use phys_control,     only: phys_getopts
    implicit none
 

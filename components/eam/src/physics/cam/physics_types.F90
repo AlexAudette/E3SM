@@ -232,8 +232,6 @@ contains
     use water_tracer_vars, only: trace_water, wtrc_nwset, wtrc_iatype,wtrc_bulk_indices
     use water_types,  only: iwtliq, iwtice, pwtype
 
-    ! use water_tracers, only: wtrc_check_lq, wtrc_is_wtrc, wtrc_is_vap
-
 !------------------------------Arguments--------------------------------
     type(physics_ptend), intent(inout)  :: ptend   ! Parameterization tendencies
 
@@ -330,8 +328,6 @@ contains
     call cnst_get_ind('NUMRAI', ixnumrain, abrtf=.false.)
     call cnst_get_ind('NUMSNO', ixnumsnow, abrtf=.false.)
 
-    ! if (trace_water) call wtrc_check_lq(ptend%lq)
-  
     do m = 1, pcnst
        if(ptend%lq(m)) then
           do k = ptend%top_level, ptend%bot_level
@@ -343,19 +339,11 @@ contains
           if (m /= ixnumice  .and.  m /= ixnumliq .and. &
               m /= ixnumrain .and.  m /= ixnumsnow ) then
              name = trim(ptend%name) // '/' // trim(cnst_name(m))
-            !  write(iulog, *) 'Constituent name = ', cnst_name(m)
 !!== KZ_WATCON 
-            !  write(iulog, *) 'use_mass_borrower', use_mass_borrower
              if(use_mass_borrower) then 
-
-                ! if (wtrc_is_wtrc(m) .and. wtrc_is_vap(m)) then
-                !   call qneg3(trim(name), state%lchnk, ncol, state%psetcols, pver, m, m, qmin(m), state%q(1,1,m),.False.)
-                !   call massborrow(trim(name), state%lchnk, ncol, state%psetcols, m, m, qmin(m), state%q(1,1,m), state%pdel)
-                ! else
 
                   call qneg3(trim(name), state%lchnk, ncol, state%psetcols, pver, m, m, qmin(m), state%q(1,1,m),.False.)
                   call massborrow(trim(name), state%lchnk, ncol, state%psetcols, m, m, qmin(m), state%q(1,1,m), state%pdel)
-                ! endif
              else
             !     call qneg3(trim(name), state%lchnk, ncol, state%psetcols, pver, m, m, qmin(m), state%q(1,1,m),.True.)
                   call qneg3(trim(ptend%name), state%lchnk, ncol, state%psetcols, pver, m, m, 0.0_r8, state%q(:,1:pver,m:m),.True.)

@@ -1591,7 +1591,6 @@ module advance_clubb_core_module
                             rtm, wtrc_rtm, wprtp, thlm, wpthlp,                        & ! intent(inout)
                             sclrm, wpsclrp, um, upwp, vm, vpwp,              & ! intent(inout)
                             um_pert, vm_pert, upwp_pert, vpwp_pert)            ! intent(inout)
-    enddo
       if ( clubb_at_least_debug_level( 0 ) ) then
           if ( err_code == clubb_fatal_error ) then
             write(fstderr,*) "Error calling advance_xm_wpxp"

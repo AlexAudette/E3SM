@@ -48,7 +48,8 @@ public :: &
    diag_surf,          &! output diagnostics of the surface
    diag_export,        &! output export state
    diag_physvar_ic,    &
-   diag_readnl          ! read namelist options
+   diag_readnl,        &          ! read namelist options
+   diag_wtrc_tend_writeout! output water tracer tendencies
 
 logical, public :: inithist_all = .false. ! Flag to indicate set of fields to be 
                                           ! included on IC file
@@ -627,7 +628,7 @@ subroutine diag_init()
    !**********************
 
     ! Water tracers:
-    if(trace_water) then
+    if(trace_water) then !Are water tracers on?
         do m=1,wtrc_nwset
           call addfld ('QFLX_'//trim(wtrc_out_names(m)),horiz_only, 'A','kg/m2/s ',&
                        'Surface water flux for '//trim(wtrc_out_names(m)))
@@ -1055,6 +1056,8 @@ end subroutine diag_conv_tend_ini
     integer  plon             ! number of longitudes
 
     integer i, k, m, lchnk, ncol, nstep
+
+    integer :: idx
 !
 !-----------------------------------------------------------------------
 !
@@ -1439,6 +1442,11 @@ end subroutine diag_conv_tend_ini
          end do
          call outfld ('TUQ_'//trim(wtrc_out_names(m)), ftem, pcols, lchnk)
        end do
+
+
+      ! idx = pbuf_get_index('Delta_'//trim(cnst_name(wtrc_iawset(iwtvap, 3))))
+      ! call pbuf_get_field(pbuf, idx, ftem, start=(/1,1/), kount=(/pcols,pver/))
+      ! call outfld('Delta_' // trim(cnst_name(wtrc_iawset(iwtvap, 3))), ftem, pcols, lchnk)
        !-----------
      end if
     !**********************
@@ -2569,6 +2577,47 @@ subroutine diag_phys_tend_writeout(state, pbuf,  tend, ztodt, tmp_q, tmp_cldliq,
    t_ttend(:ncol,:) = state%t(:ncol,:)
 
 end subroutine diag_phys_tend_writeout
+
+
+
+subroutine diag_wtrc_tend_writeout(state, tmp_q, process)
+
+   !---------------------------------------------------------------
+   !
+   ! Purpose:  Dump clubb rescaling tendencies for water tracers
+   !
+   !---------------------------------------------------------------
+
+   use check_energy,    only: check_energy_get_integrals
+   use physconst,       only: cpair
+   use water_tracer_vars, only: wtrc_iawset
+   use water_types, only: iwtvap
+
+   ! Arguments
+
+   type(physics_state), intent(in   ) :: state 
+   character(len=*) , intent(in)    :: process
+
+   real(r8)           , intent(inout) :: tmp_q     (pcols,pver) ! As input, holds pre-adjusted tracers (FV)
+   real(r8)  :: q_diff     (pcols,pver) ! 
+   
+   !---------------------------Local workspace-----------------------------
+
+   integer  :: m      ! constituent index
+   integer  :: lchnk  ! chunk index
+   integer  :: ncol   ! number of columns in chunk
+
+   !-----------------------------------------------------------------------
+
+   lchnk = state%lchnk
+   ncol  = state%ncol
+
+   q_diff(:ncol,:pver) = -(tmp_q(:ncol,:pver) - state%q(:ncol,:pver,  wtrc_iawset(1, 2)))
+   call outfld('Delta_'//process // '_'// trim(cnst_name(wtrc_iawset(iwtvap, 3))), q_diff, pcols, lchnk)
+
+   tmp_q(:ncol,:pver) = state%q(:ncol,:pver,  wtrc_iawset(1, 2))
+
+end subroutine diag_wtrc_tend_writeout
 
 !#######################################################################
 

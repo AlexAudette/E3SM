@@ -3286,9 +3286,6 @@ end subroutine clubb_init_cnst
     use co2_cycle,              only: co2_cycle_set_cnst_type
     use camsrfexch,             only: cam_in_t
 
-    use water_tracer_vars,      only: wtrc_nwset, wtrc_iatype
-    use water_types,            only: iwtvap
-
     implicit none
 
     ! --------------- !

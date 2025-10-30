@@ -3729,17 +3729,6 @@ do i=1,ncol   !loop over columns
     end do !nstep
 !*****************
 
-!DEBUGGING:
-!---------
-! if(abs((preci(i,1)+precr(i,1))-(prec_pcw(i)+prec_sed(i))) .gt. 1e-18_r8) then
-!  write(*,*) 'H2O Stratiform precip error!',(preci(i,1)+precr(i,1))-(prec_pcw(i)+prec_sed(i)),&
-!              preci(i,1)+precr(i,1),prec_pcw(i)+prec_sed(i),prec_pcw(i),prec_sed(i),precr(i,1),preci(i,1),i     
-! end if
-! if(abs(preci(i,1)-(snow_pcw(i)+snow_sed(i))) .gt. 1e-18_r8) then
-!  write(*,*) 'H2O Stratiform snow error!',preci(i,1)-(snow_pcw(i)+snow_sed(i)),&
-!              preci(i,1),snow_pcw(i)+snow_sed(i),snow_pcw(i),snow_sed(i),i
-! end if
-!---------
 
 end do !ncol (i)
 
@@ -5462,234 +5451,11 @@ do m=1,wtrc_nwset
 
 end do
 
-!-----------------------
-!correct for mass errors:
-!-----------------------
-! do i=1,ncol
-!     !Calculate differences:
-!     pmass0 = prec(i,wtrc_iatype(2,iwtvap))
-!     smass0 = snow(i,wtrc_iatype(2,iwtvap))
-!     pdiff  = pmass0 - prec(i,wtrc_iatype(1,iwtvap))
-!     sdiff  = smass0 - snow(i,wtrc_iatype(1,iwtvap))
-!     do m=2,wtrc_nwset
-!     !Total precip errors:
-!     Rd = wtrc_ratio(iwspec(wtrc_iatype(m,iwtvap)),prec(i,wtrc_iatype(m,iwtvap)),pmass0)
-!     prec(i,wtrc_iatype(m,iwtvap)) = max(0._r8,prec(i,wtrc_iatype(m,iwtvap))-Rd*pdiff)
-!     !Snow errors:
-!     Rd = wtrc_ratio(iwspec(wtrc_iatype(m,iwtvap)),snow(i,wtrc_iatype(m,iwtvap)),smass0)
-!     snow(i,wtrc_iatype(m,iwtvap)) = max(0._r8,snow(i,wtrc_iatype(m,iwtvap))-Rd*sdiff)
-!     !Giant error check: 
-!     !NOTE:  !Seems to occur baout once every seven years. -JN
-!     if(prec(i,wtrc_iatype(m,iwtvap)) .gt. 10._r8*prec(i,wtrc_iatype(1,iwtvap))) then
-!     ! if(prec(i,wtrc_iatype(m,iwtvap)) .gt. 1.5_r8*prec(i,wtrc_iatype(1,iwtvap))) then
-!         if(prec(i,wtrc_iatype(1,iwtvap)) .gt. wtrc_qmin) &
-!         write(*,*) 'ERROR:  Isotopic deep-conv precip error!',prec(i,wtrc_iatype(m,iwtvap)),prec(i,wtrc_iatype(1,iwtvap)),&
-!                     snow(i,wtrc_iatype(m,iwtvap)),snow(i,wtrc_iatype(1,iwtvap)),i,m
-!         !Set the tracer precip back to bulk water (it violates mass-conservation,
-!         !but is probably due to a numerical/non-physical error anyways).
-!         prec(i,wtrc_iatype(m,iwtvap)) = prec(i,wtrc_iatype(1,iwtvap))
-!         snow(i,wtrc_iatype(m,iwtvap)) = snow(i,wtrc_iatype(1,iwtvap))
-!     end if
-!     end do
-! end do
-!----------------------
 
 !**************
 !End subroutine
 !**************
 end subroutine wtrc_precip_evap
-
-
-! subroutine wtrc_conv_evap(state)
-
-!     use wv_saturation,  only: qsat
-!     use phys_grid, only: get_rlat_all_p
-
-! !------------------------------Arguments--------------------------------
-!     integer,intent(in) :: ncol, lchnk                        ! number of columns and chunk index
-!     real(r8),intent(in), dimension(pcols,pver) :: t          ! temperature (K)
-!     real(r8),intent(in), dimension(pcols,pver) :: pmid       ! midpoint pressure (Pa) 
-!     real(r8),intent(in), dimension(pcols,pver) :: pdel       ! layer thickness (Pa)
-!     real(r8),intent(in), dimension(pcols,pver,pcnst) :: q          ! water vapor (kg/kg)
-!     real(r8),intent(in), dimension(pcols) :: landfrac
-!     real(r8),intent(inout), dimension(pcols,pver) :: tend_s     ! heating rate (J/kg/s)
-!     real(r8),intent(inout), dimension(pcols,pver,pcnst) :: tend_q     ! water vapor tendency (kg/kg/s)
-!     real(r8),intent(out  ), dimension(pcols,pver) :: tend_s_snwprd ! Heating rate of snow production
-!     real(r8),intent(out  ), dimension(pcols,pver) :: tend_s_snwevmlt ! Heating rate of evap/melting of snow
-    
-
-
-!     real(r8), intent(in   ) :: prdprec(pcols,pver)! precipitation production (kg/ks/s)
-!     real(r8), intent(in   ) :: cldfrc(pcols,pver) ! cloud fraction
-!     real(r8), intent(in   ) :: deltat             ! time step
-
-!     real(r8), intent(inout) :: wtprec(pcols,wtrc_nwset)        ! Convective-scale preciptn rate
-!     real(r8), intent(out)   :: wtsnow(pcols,wtrc_nwset)        ! Convective-scale snowfall rate
-
-!     real(r8), optional, intent(in), allocatable  :: prdsnow(:,:) ! snow production (kg/ks/s)
-
-
-!     real(r8) :: Rp(pcols,pver)      !Water tracer precip ratio
-!     real(r8) :: Rr(pcols,pver)      !Water tracer rain ratio
-!     real(r8) :: Rv(pcols,pver)      !Water tracer vapor ratio
-!     real(r8) :: Rs(pcols,pver)      !Water tracer snow ratio <-Not used?
-
-!     !---------------------------Local storage-------------------------------
-
-!     real(r8) :: es    (pcols,pver,wtrc_nwset)    ! Saturation vapor pressure
-!     real(r8) :: fice   (pcols,pver,wtrc_nwset)    ! ice fraction in precip production
-!     real(r8) :: fsnow_conv(pcols,pver,wtrc_nwset) ! snow fraction in precip production
-!     real(r8) :: qs   (pcols,pver,wtrc_nwset)    ! saturation specific humidity
-!     real(r8),intent(out) :: flxprec(pcols,pverp,wtrc_nwset)   ! Convective-scale flux of precip at interfaces (kg/m2/s)
-!     real(r8),intent(out) :: flxsnow(pcols,pverp,wtrc_nwset)   ! Convective-scale flux of snow   at interfaces (kg/m2/s)
-!     real(r8),intent(out) :: ntprprd(pcols,pver,wtrc_nwset)    ! net precip production in layer
-!     real(r8),intent(out) :: ntsnprd(pcols,pver,wtrc_nwset)    ! net snow production in layer
-    
-!     !Needed for water tracers:   
-!     ! real(r8), intent(out) :: evpstore(pcols,pver) !preciptation evaporation
-!     ! real(r8), intent(out) :: substore(pcols,pver) !snow sublimation
-
-!     real(r8) :: work1                  ! temp variable (pjr)
-!     real(r8) :: work2                  ! temp variable (pjr)
-
-!     real(r8) :: evpvint(pcols,wtrc_nwset)         ! vertical integral of evaporation
-!     real(r8) :: evpprec(pcols,wtrc_nwset)         ! evaporation of precipitation (kg/kg/s)
-!     real(r8) :: evpsnow(pcols,wtrc_nwset)         ! evaporation of snowfall (kg/kg/s)
-!     real(r8) :: snowmlt(pcols,wtrc_nwset)         ! snow melt tendency in layer
-!     real(r8) :: flxsntm(pcols,wtrc_nwset)         ! flux of snow into layer, after melting
-
-!     real(r8) :: kemask
-!     real(r8) :: evplimit               ! temp variable for evaporation limits
-!     real(r8) :: rlat(pcols,wtrc_nwset)
-!     real(r8) :: dum
-!     real(r8) :: omsm
-
-!     integer :: i,k                     ! longitude,level indices
-!     logical :: old_snow
-
-! !--------------------------------------------------------
-!     ! If prdsnow is passed in and allocated, then use it in the calculation, otherwise
-!     ! use the old snow calculation
-!     old_snow=.true.
-!     if (present(prdsnow)) then
-!        if (allocated(prdsnow)) then
-!           old_snow=.false.
-!        end if
-!     end if
-
-
-!     Rp(:,:) = 0._r8
-!     Rr(:,:) = 0._r8
-!     Rs(:,:) = 0._r8
-!     Rv(:,:) = 0._r8
-!     ! WT-bock ends
-
-! ! convert input precip to kg/m2/s
-!     wtprec(:ncol,:) = wtprec(:ncol,:)*1000._r8
-
-! ! determine saturation vapor pressure
-!     call qsat(t(1:ncol, 1:pver), pmid(1:ncol, 1:pver), &
-!          es(1:ncol, 1:pver), qs(1:ncol, 1:pver))
-
-! ! determine ice fraction in rain production (use cloud water parameterization fraction at present)
-!     call cldfrc_fice(ncol, t, fice, fsnow_conv)
-
-! ! zero the flux integrals on the top boundary
-!     flxprec(:ncol,1,:) = 0._r8
-!     flxsnow(:ncol,1,:) = 0._r8
-!     evpvint(:ncol,:)   = 0._r8
-!     omsm=0.9999_r8
-
-
-
-!     do k = 1, pver
-!         do i = 1, ncol
-
-!             do m=1,wtrc_nwset
-
-!                 Rp(:,:) = 0._r8 !initalize ratios
-!                 Rr(:,:) = 0._r8
-!                 Rs(:,:) = 0._r8
-!                 Rv(:,:) = 0._r8
-                
-!                 !**********
-!                 !Set ratios
-!                 !**********
-                
-!                 !NOTE:  Evaporation and sublimation are functions of the precip flux, not the precip
-!                 !production.  Thus the ratios should be based off of the precip flux. - JN
-                
-!                 !Water tracer precipitation ratio:
-!                 if(k .eq. 1) then !at top of column?
-!                     Rp(i,k) = wtrc_ratio(iwspec(wtrc_iatype(m,iwtvap)),rprd(i,k,wtrc_iatype(m,iwtvap)),rprd(i,k,wtrc_iatype(1,iwtvap)))
-!                 else
-!                     if(flxprec(i,k,1) .ne. 0._r8) then !is there actual precipitation here?
-!                         Rp(i,k) = wtrc_ratio(iwspec(wtrc_iatype(m,iwtvap)),flxprec(i,k,m),flxprec(i,k,1))
-!                     else !If not, just use local production.
-!                         Rp(i,k) = wtrc_ratio(iwspec(wtrc_iatype(m,iwtvap)),rprd(i,k,wtrc_iatype(m,iwtvap)),rprd(i,k,wtrc_iatype(1,iwtvap)))
-!                     end if
-!                 end if
-                
-!                 !Water tracer rain ratio:
-!                 if(k .eq. 1) then !at top of column?
-!                     Rr(i,k) = wtrc_ratio(iwspec(wtrc_iatype(m,iwtvap)),rprd(i,k,wtrc_iatype(m,iwtvap)),rprd(i,k,wtrc_iatype(1,iwtvap)))
-!                 else
-!                     if((flxprec(i,k,1)-flxsnow(i,k,1)) .gt. 0._r8) then !is there actual precipitation here (if negative, then assume all snow)?
-!                         Rr(i,k) = wtrc_ratio(iwspec(wtrc_iatype(m,iwtvap)),(flxprec(i,k,m)-flxsnow(i,k,m)),(flxprec(i,k,1)-flxsnow(i,k,1)))
-!                     else !If not, just use local production.
-!                         Rr(i,k) = wtrc_ratio(iwspec(wtrc_iatype(m,iwtvap)),rprd(i,k,wtrc_iatype(m,iwtvap)),rprd(i,k,wtrc_iatype(1,iwtvap)))
-!                     end if
-!                 end if
-                
-!                 !Water tracer snow ratio:
-!                 if(k .eq. 1) then !at top of column?
-!                 Rs(i,k) = wtrc_ratio(iwspec(wtrc_iatype(m,iwtvap)),rprd(i,k,wtrc_iatype(m,iwtvap)),rprd(i,k,wtrc_iatype(1,iwtvap)))
-!                 else
-!                 if(flxsnow(i,k,1) .ne. 0._r8) then !is there actual precipitation here?
-!                     Rs(i,k) = wtrc_ratio(iwspec(wtrc_iatype(m,iwtvap)),flxsnow(i,k,m),flxsnow(i,k,1))
-!                 else !If not, just use local production.
-!                     Rs(i,k) = wtrc_ratio(iwspec(wtrc_iatype(m,iwtvap)),rprd(i,k,wtrc_iatype(m,iwtvap)),rprd(i,k,wtrc_iatype(1,iwtvap)))
-!                 end if
-!                 end if
-                
-!                 !Water tracer vapor ratio:
-!                 Rv(i,k) = wtrc_ratio(iwspec(wtrc_iatype(m,iwtvap)),state%q(i,k,wtrc_iatype(m,iwtvap)),state%q(i,k,wtrc_iatype(1,iwtvap)))
-
-! ! Melt snow falling into layer, if necessary. 
-!                 if( old_snow ) then
-!                     if (t(i,k) > tmelt) then
-!                        flxsntm(i) = 0._r8
-!                        snowmlt(i) = flxsnow(i,k) * gravit/ pdel(i,k)
-            
-!                     else
-!                        flxsntm(i) = flxsnow(i,k)
-!                        snowmlt(i) = 0._r8
-!                     end if
-!                   else
-!                     ! make sure melting snow doesn't reduce temperature below threshold
-!                     if (t(i,k) > tmelt) then
-!                         dum = -latice/cpres*flxsnow(i,k)*gravit/pdel(i,k)*deltat
-!                         if (t(i,k) + dum .le. tmelt) then
-!                           dum = (t(i,k)-tmelt)*cpres/latice/deltat
-!                           dum = dum/(flxsnow(i,k)*gravit/pdel(i,k))
-!                           dum = max(0._r8,dum)
-!                           dum = min(1._r8,dum)
-!                         else
-!                           dum = 1._r8
-!                         end if
-!                         dum = dum*omsm
-!                         flxsntm(i) = flxsnow(i,k)*(1.0_r8-dum)
-!                         snowmlt(i) = dum*flxsnow(i,k)*gravit/ pdel(i,k)
-!                     else
-!                        flxsntm(i) = flxsnow(i,k)
-!                        snowmlt(i) = 0._r8
-!                     end if
-!                   end if
-
-
-!         enddo
-!     enddo
-! end subroutine wtrc_conv_evap
 
 
 
@@ -6874,27 +6640,21 @@ pevp(:,:,:) = 0._r8  !inialize precipitable liquid evaporation
 ! do k = msg + 2,pver
 do k = 1,pver
     do i = 1,lengath
-    do m=1,wtrc_nwset !loop over water tracers/isotopes
-        totpcp(i,m) = max(totpcp(i,m),0._r8) !Remove negative values
-        totevp(i,m) = max(totevp(i,m),0._r8)
-        if (totevp(i,m) > 0._r8 .and. totpcp(i,m) > 0._r8) then
-        pevp(i,k,m) = wtevp(i,k,m)*min(1._r8, totpcp(i,m)/(totevp(i,m)+totpcp(i,m)))
-        else
-        pevp(i,k,m) = 0._r8
-        end if
-        rprd(i,k,m) = rprd(i,k,m)-pevp(i,k,m) !evaporate precipitation
-        ! Rr = wtrc_ratio(m,rprd(i,k,m),rpdpc(i,k)) !calculate precip ratio
-        Rr = wtrc_ratio(m,rprd(i,k,m),rprd(i,k,1)) !calculate precip ratio
-            ! wtrprd(ideep(i),k,wtrc_iatype(m,iwtvap)) = Rr*rpdpc(ideep(i),k,1)  !calculate precip production (done to avoid unit conversions)
-            ! wtrprd(ideep(i),k,wtrc_iatype(m,iwtvap)) = Rr*wtrprd(ideep(i),k,1)  !calculate precip production (done to avoid unit conversions)
-wtrprd(i,k,wtrc_iatype(m,iwtvap)) = Rr*wtrprd(i,k,1)  !calculate precip production (done to avoid unit conversions)
-            ! if (m.eq. 2) then
-            !     if (Rr .lt. 0.5_r8) then
-            !         write(iulog, *) 'Rr error', Rr, wtrprd(ideep(i),k,wtrc_iatype(m,iwtvap))
-            !         call endrun('Rr error')
-            !     endif
-            ! endif
-    end do !water tracers (m)
+        do m=1,wtrc_nwset !loop over water tracers/isotopes
+            totpcp(i,m) = max(totpcp(i,m),0._r8) !Remove negative values
+            totevp(i,m) = max(totevp(i,m),0._r8)
+            if (totevp(i,m) > 0._r8 .and. totpcp(i,m) > 0._r8) then
+            pevp(i,k,m) = wtevp(i,k,m)*min(1._r8, totpcp(i,m)/(totevp(i,m)+totpcp(i,m)))
+            else
+            pevp(i,k,m) = 0._r8
+            end if
+            rprd(i,k,m) = rprd(i,k,m)-pevp(i,k,m) !evaporate precipitation
+            ! Rr = wtrc_ratio(m,rprd(i,k,m),rpdpc(i,k)) !calculate precip ratio
+            Rr = wtrc_ratio(m,rprd(i,k,m),rprd(i,k,1)) !calculate precip ratio
+                ! wtrprd(ideep(i),k,wtrc_iatype(m,iwtvap)) = Rr*rpdpc(ideep(i),k,1)  !calculate precip production (done to avoid unit conversions)
+                ! wtrprd(ideep(i),k,wtrc_iatype(m,iwtvap)) = Rr*wtrprd(ideep(i),k,1)  !calculate precip production (done to avoid unit conversions)
+            wtrprd(i,k,wtrc_iatype(m,iwtvap)) = Rr*wtrprd(i,k,1)  !calculate precip production (done to avoid unit conversions)
+        end do !water tracers (m)
     end do
 end do
 
@@ -7425,13 +7185,6 @@ real(r8), intent(in) :: hmn(pcols,pver)     !bulk environmental moist static ene
                     Rr = wtrc_ratio(m,rprd(i,k),rpdpc(i,k)) !calculate precip ratio
                     wtrprd(ideep(i),k,wtrc_iatype(m,iwtvap)) = Rr*wtrprd(ideep(i),k,1)  !calculate precip production (done to avoid unit conversions)
 
-
-                    ! if (m.eq. 2) then
-                    !     if (abs(wtrprd(ideep(i),k,wtrc_iatype(m,iwtvap)) - wtrprd(ideep(i),k,wtrc_iatype(1,iwtvap))) .gt. 1e-16) then
-                    !         write(iulog, *) 'wtrprd error', wtrprd(ideep(i),k,wtrc_iatype(m,iwtvap)) , wtrprd(ideep(i),k,wtrc_iatype(1,iwtvap))
-                    !         call endrun('wtrprd error q1q2')
-                    !     endif
-                    ! endif
                     !+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
                 end do
             end do
@@ -7481,13 +7234,6 @@ real(r8), intent(in) :: hmn(pcols,pver)     !bulk environmental moist static ene
                     !calculate detrained condensate:
                     wtdlf(ideep(i),k,m) = du(i,k)*ql(i,k+1,m) 
 
-                    ! if (m.eq. 2) then
-                    !     if (abs(wtdlf(ideep(i),k,m) - wtdlf(ideep(i),k,1)) .gt. 1e-16) then
-                    !         write(iulog, *) 'wtdlf error', wtdlf(ideep(i),k,m) , wtdlf(ideep(i),k,1)
-                    !         call endrun('wtdlf error')
-                    !     endif
-                    ! endif
-
                 end do
             end do
 
@@ -7504,13 +7250,6 @@ real(r8), intent(in) :: hmn(pcols,pver)     !bulk environmental moist static ene
                     else if (k > mx(i)) then
                         dqdt(ideep(i),k,wtrc_iatype(m,iwtvap)) = dqdt(ideep(i),k-1,wtrc_iatype(m,iwtvap))
                     end if
-
-                    ! if (m.eq. 2) then
-                    !     if (abs(dqdt(ideep(i),k,wtrc_iatype(m,iwtvap)) - dqdt(ideep(i),k,wtrc_iatype(1,iwtvap))) .gt. 1e-16) then
-                    !         write(iulog, *) 'dqdt error', dqdt(ideep(i),k,wtrc_iatype(m,iwtvap)) , dqdt(ideep(i),k,wtrc_iatype(1,iwtvap)), qu(i,k,m),qhat(i,k,m), qu(i,k,1),qhat(i,k,1)
-                    !         call endrun('dqdt error')
-                    !     endif
-                    ! endif
                 end do
             end do
                                                             
@@ -7766,41 +7505,34 @@ end do
 !water  vapor:
 !-------------
 
-do m=1,wtrc_nwset !water tracers
-do k = msg + 2,pver
-do i = 1,lengath
-qdifr = 0.0_r8
-if (q(ideep(i),k,wtrc_iatype(m,iwtvap)) > 0._r8 .or. q(ideep(i),k-1,wtrc_iatype(m,iwtvap)) > 0._r8) &
-qdifr = abs((q(ideep(i),k,wtrc_iatype(m,iwtvap))- &
-   q(ideep(i),k-1,wtrc_iatype(m,iwtvap)))/max(q(ideep(i),k-1,wtrc_iatype(m,iwtvap)),&
-   q(ideep(i),k,wtrc_iatype(m,iwtvap))))
-if ((qdifr > 1.E-6_r8) .and. (qdifr /= 1._r8)) then !qdifr /= 1 used to prevent divison by zero. - JN
-qhat(i,k,m) = log(q(ideep(i),k-1,wtrc_iatype(m,iwtvap))/q(ideep(i),k,wtrc_iatype(m,iwtvap))) * &
-                                q(ideep(i),k-1,wtrc_iatype(m,iwtvap)) * &
-                                q(ideep(i),k,wtrc_iatype(m,iwtvap))/(q(ideep(i),k-1,wtrc_iatype(m,iwtvap)) - &
-                                q(ideep(i),k,wtrc_iatype(m,iwtvap)))
-if (m.eq. 1) then
-            ! qhatb(i,k) = log(q(ideep(i),k-1,1)/q(ideep(i),k,1)) * &
-            ! q(ideep(i),k-1,1) * &
-            ! q(ideep(i),k,1)/(q(ideep(i),k-1,1) - &
-            ! q(ideep(i),k,1))
-            ! if (abs(qhatb(i,k) - qhat(i,k,m)) .gt. 1e-24) then
-            !   write(iulog, *) 'qhat error', qhatb(i,k) , qhat(i,k,m)
-            !   call endrun('qhat error')
-            ! endif
-          endif
-else
-qhat(i,k,m) = 0.5_r8* (q(ideep(i),k,wtrc_iatype(m,iwtvap))+q(ideep(i),k-1,wtrc_iatype(m,iwtvap)))
-!  if (m.eq. 1) then
-          !   qhatb(i,k) = 0.5_r8* (q(ideep(i),k,1)+q(ideep(i),k-1,1))
-            ! if (abs(qhatb(i,k) - qhat(i,k,m)) .gt. 1e-24) then
-            !   write(iulog, *) 'qhat error', qhatb(i,k) , qhat(i,k,m)
-            !   call endrun('qhat error')
-            ! endif
-          ! endif
-end if
-end do
-end do
+do m = 1, wtrc_nwset ! water tracers
+    do k = msg + 2, pver
+        do i = 1, lengath
+            qdifr = 0.0_r8
+            if (q(ideep(i),k,wtrc_iatype(m,iwtvap)) > 0._r8 .or. q(ideep(i),k-1,wtrc_iatype(m,iwtvap)) > 0._r8) &
+                qdifr = abs((q(ideep(i),k,wtrc_iatype(m,iwtvap)) - &
+                    q(ideep(i),k-1,wtrc_iatype(m,iwtvap))) / max(q(ideep(i),k-1,wtrc_iatype(m,iwtvap)), &
+                    q(ideep(i),k,wtrc_iatype(m,iwtvap))))
+            if ((qdifr > 1.E-6_r8) .and. (qdifr /= 1._r8)) then ! qdifr /= 1 used to prevent division by zero. - JN
+                qhat(i,k,m) = log(q(ideep(i),k-1,wtrc_iatype(m,iwtvap)) / q(ideep(i),k,wtrc_iatype(m,iwtvap))) * &
+                                            q(ideep(i),k-1,wtrc_iatype(m,iwtvap)) * &
+                                            q(ideep(i),k,wtrc_iatype(m,iwtvap)) / (q(ideep(i),k-1,wtrc_iatype(m,iwtvap)) - &
+                                            q(ideep(i),k,wtrc_iatype(m,iwtvap)))
+                if (m .eq. 1) then
+                    ! qhatb(i,k) = log(q(ideep(i),k-1,1)/q(ideep(i),k,1)) * &
+                    ! q(ideep(i),k-1,1) * &
+                    ! q(ideep(i),k,1)/(q(ideep(i),k-1,1) - &
+                    ! q(ideep(i),k,1))
+                    ! if (abs(qhatb(i,k) - qhat(i,k,m)) .gt. 1e-24) then
+                    !   write(iulog, *) 'qhat error', qhatb(i,k) , qhat(i,k,m)
+                    !   call endrun('qhat error')
+                    ! endif
+                endif
+            else
+                qhat(i,k,m) = 0.5_r8 * (q(ideep(i),k,wtrc_iatype(m,iwtvap)) + q(ideep(i),k-1,wtrc_iatype(m,iwtvap)))
+            end if
+        end do
+    end do
 end do
 
 !***********************************************************
@@ -7866,19 +7598,7 @@ uqdiff = qub(i,k)-qu(i,k,m)
 end if
 ! Rfix      = wtrc_ratio(iwspec(wtrc_iatype(m,iwtvap)),qu(i,k,m),oval)
 Rfix      = wtrc_ratio(m,qu(i,k,m),oval)
-! if (m.eq. 2) then
-            !   if (abs(Rfix - 0.5_r8) .gt. 1.e-24) then
-            !     write(iulog, *) 'Rfix error', Rfix,qu(i,k,m),oval
-            !     call endrun('Rfix error')
-            !   endif
-            ! endif
 qu(i,k,m) = qu(i,k,m)+Rfix*uqdiff !add back difference
-!   if (m.eq. 1) then
-          !   if (abs(qu(i,k,m) - qub(i,k)) .gt. 1.e-24) then
-          !     write(iulog, *) 'qu error', qu(i,k,m),qub(i,k)
-          !     call endrun('Rfix error')
-          !   endif
-          ! endif
 !-------------- 
 
 !Produce cloud condensate:
@@ -7890,12 +7610,6 @@ ql(i,k,m) = ql1/ (1._r8+dz(i,k)*c0mask(i))
 else
 ql(i,k,m) = 0._r8
 end if
-! if (m.eq.2) then
-            !   if (abs(ql(i,k,m) - 0.5*ql(i,k,1)) .gt. 1.e-24) then
-            !     write(iulog, *) 'ql error', ql(i,k,m) , 0.5*ql(i,k,1)
-            !     call endrun('ql error')
-            !   endif
-            ! endif
 
 end do !water tracers
 
@@ -7907,13 +7621,6 @@ end do
 
 end if
 end if
-!complain if uqdiff is too large: 
-!----------------
-! if((uqdiff/qub(i,k)) .gt. 10e-10_r8) then !relative error greater than 1e-9?
-! write(iulog,*) 'wtrc q1q2 uqdiff error here!',uqdiff/qub(i,k),uqdiff,&
-!         qub(i,k),i,k
-! end if
-!---------------
 end do
 end do
 
@@ -7941,23 +7648,10 @@ end do
 !that it equilibrates isotopically with the downdraft air. - JN 
 
 do i = 1,lengath
-do m=1,wtrc_nwset
-  ! Rd(i,jd(i),m) = wtrc_ratio(iwspec(wtrc_iatype(m,iwtvap)),qu(i,jd(i),m),qu(i,jd(i),1))
-  Rd(i,jd(i),m) = wtrc_ratio(m,qu(i,jd(i),m),qu(i,jd(i),1))
-!  if (m.eq. 2) then
-      !   if (abs(Rd(i,jd(i),m) - 0.5_r8) .gt. 1.e-24) then
-      !     write(iulog, *) 'Rd error', Rd(i,jd(i),m),qu(i,jd(i),m),qu(i,jd(i),1)
-      !     call endrun('Rd error')
-      !   endif
-      ! endif
-qd(i,jd(i),m) = Rd(i,jd(i),m)*qds(i,jd(i))
-!   if (m.eq. 2) then
-      !   if (abs(qd(i,jd(i),m) - 0.5_r8 * qd(i,jd(i),1)) .gt. 1.e-24) then
-      !     write(iulog, *) 'qd error', qd(i,jd(i),m),qd(i,jd(i),1)*0.5_r8
-      !     call endrun('qd error')
-      !   endif
-      ! endif
-end do
+    do m=1,wtrc_nwset
+        Rd(i,jd(i),m) = wtrc_ratio(m,qu(i,jd(i),m),qu(i,jd(i),1))
+        qd(i,jd(i),m) = Rd(i,jd(i),m)*qds(i,jd(i))
+    end do
 end do
 
 do k = msg+2,pver
@@ -7994,19 +7688,7 @@ dqdiff = qdb(i,k+1)-qd(i,k+1,m)
 end if
 ! Rfix        = wtrc_ratio(iwspec(wtrc_iatype(m,iwtvap)),qd(i,k+1,m),oval)
 Rfix        = wtrc_ratio(m,qd(i,k+1,m),oval)
-!  if (m.eq. 2) then
-          !   if (abs(Rfix - 0.5_r8) .gt. 1.e-24) then
-          !     write(iulog, *) 'Rfix error', Rfix,qu(i,k+1,m),oval
-          !     call endrun('Rfix error')
-          !   endif
-          ! endif
 qd(i,k+1,m) = qd(i,k+1,m)+Rfix*dqdiff
-!  if (m.eq. 1) then
-          !   if (abs(qd(i,jd(i),m) - qdb(i,jd(i))) .gt. 1.e-24) then
-          !     write(iulog, *) 'qd error', qd(i,jd(i),m),qdb(i,jd(i))
-          !     call endrun('qd error')
-          !   endif
-          ! endif
 !---------------
 
 totevp(i,m) = totevp(i,m) - dz(i,k)*ed(i,k)*q(ideep(i),k,wtrc_iatype(m,iwtvap)) 
@@ -8067,23 +7749,9 @@ end if
 if (m.eq.1) pevpb(i,k) = pevp(i,k)
 rprd(i,k) = rprd(i,k)-pevp(i,k) !evaporate precipitation
 if (m.eq.1) rprdb(i,k) = rprd(i,k)
-        ! if (m.eq.2) then
-        !   if (abs(rprd(i,k) - rprdb(i,k)*0.5) .gt. 1.e-24) then
-        !     write(iulog, *) 'rprd error', rprd(i,k) , rprdb(i,k)*0.5
-        !     call endrun('rprd error')
-        !   endif
-        !   if (abs(pevp(i,k) - pevpb(i,k)*0.5) .gt. 1.e-24) then
-        !     write(iulog, *) 'pevp error', pevp(i,k) , pevpb(i,k)*0.5
-        !     call endrun('pevp error')
-        !   endif
-        ! endif
 
         ! Rr = wtrc_ratio(m,rprd(i,k),rpdpc(i,k)) !calculate precip ratio
 if (abs(rpdpc(i,k)) .gt. 0.0_r8) then
-          ! if (rprd(i,k) .lt. 1.e-24) then
-          !   write(iulog, *) 'rprd 0',rpdpc(i,k), rprd(i,k)
-          !   call endrun('rprd 0')
-          ! endif
 
           Rr = rprd(i,k)/rpdpc(i,k)
 wtrprd(ideep(i),k,wtrc_iatype(m,iwtvap)) = Rr*wtrprd(ideep(i),k,1)  !calculate precip production (done to avoid unit conversions)
@@ -8094,21 +7762,6 @@ wtrprd(ideep(i),k,wtrc_iatype(m,iwtvap)) = Rr*wtrprd(ideep(i),k,1)  !calculate p
 
         endif
         
-      !   if (m.eq. 2) then
-      !     if (abs(Rr - 0.5_r8) .gt. 1.e-24) then
-      !         write(iulog, *) 'Rr error', Rr,rprd(i,k),rpdpc(i,k)*0.5, rprdb(i,k)
-      !         call endrun('Rr error')
-      !     endif
-      ! endif
-      !   wtrprd(ideep(i),k,wtrc_iatype(m,iwtvap)) = Rr*wtrprd(ideep(i),k,1)  !calculate precip production (done to avoid unit conversions)
-      !   if (m.eq. 2) then 
-!     if (rpdpc(i,k) .gt. 0._r8) then
-      !     if (abs(wtrprd(ideep(i),k,wtrc_iatype(m,iwtvap))- 0.5_r8*wtrprd(ideep(i),k,1)) .gt. 1.e-24) then
-      !         write(iulog, *) 'wtrprd error', Rr,wtrprd(ideep(i),k,wtrc_iatype(m,iwtvap)),wtrprd(ideep(i),k,1)*0.5,rprd(i,k),rpdpc(i,k)*0.5 
-      !         call endrun('wtrprd error')
-      !     endif
-      !   endif
-      !   endif
         
 end do
 end do
@@ -8140,28 +7793,6 @@ do i = 1,lengath
   Rc = wtrc_ratio(m,qu(i,k+1,m),qu(i,k+1,1)) !calculate tracer ratio trying with qu
         ! Re = wtrc_ratio(m,wtevp(i,k,m),wtevp(i,k,1))
         Re = wtrc_ratio(m,qd(i,k,m),qd(i,k,1))
-      !   if (m.eq. 2) then
-      !     if (abs(wtcu(i,k,m)- 0.5_r8*wtcu(i,k,1)) .gt. 1.e-24) then
-      !         write(iulog, *) 'wtcu error', Rc,wtcu(i,k,m),wtcu(i,k,1)
-      !         call endrun('wtcu error')
-      !     endif
-      !     if (abs(wtevp(i,k,m)- 0.5_r8*wtevp(i,k,1)) .gt. 1.e-24) then
-      !         write(iulog, *) 'wtevp error', Re,wtevp(i,k,m),wtevp(i,k,1)
-      !         call endrun('wtevp error')
-      !     endif
-      !     if (abs(qu(i,k,m)- 0.5_r8*qu(i,k,1)) .gt. 1.e-24) then
-      !         write(iulog, *) 'qu error',qu(i,k,m),qu(i,k,1)
-      !         call endrun('qu error')
-      !     endif
-      !     if (abs(qd(i,k,m)- 0.5_r8*qd(i,k,1)) .gt. 1.e-24) then
-      !         write(iulog, *) 'qd error',qd(i,k,m),qd(i,k,1)
-      !         call endrun('qd error')
-      !     endif
-      !     if (abs(qhat(i,k,m)- 0.5_r8*qhat(i,k,1)) .gt. 1.e-24) then
-      !         write(iulog, *) 'qhat error',qhat(i,k,m),qhat(i,k,1)  
-      !         call endrun('qhat error')
-      !     endif
-      ! endif
 
 !NOTE:  Ratios are used in order to avoid unit conversions. - JN
 
@@ -8177,42 +7808,8 @@ dqdt(ideep(i),k,wtrc_iatype(m,iwtvap)) = emc + &
        +md(i,k+1)* (qd(i,k+1,m)-qhat(i,k+1,m)) &
        -md(i,k)*   (qd(i,k,m)-qhat(i,k,m)) &
       )/dp(i,k)
-!  if (m .eq. 2) then
-        !    if (abs(dqdt(ideep(i),k,wtrc_iatype(m,iwtvap)) - 0.5_r8*dqdt(ideep(i),k,wtrc_iatype(1,iwtvap))) .gt. 1e-24) then
-        !      write(iulog, *) 'dqdt error 1.1 m=2:', dqdt(ideep(i),k,wtrc_iatype(m,iwtvap)) , 0.5_r8*dqdt(ideep(i),k,wtrc_iatype(1,iwtvap)), 0.5_r8*dqdt(ideep(i),k,1)
-        !      write(iulog, *) 'qu', qu(i,k+1,m), 0.5_r8*qu(i,k+1,1)
-        !      write(iulog, *)  'qhat', qhat(i,k+1,m), 0.5_r8*qhatb(i,k+1)
-        !      write(iulog, *) 'qu', qu(i,k,m), 0.5_r8*qu(i,k,1)
-        !      write(iulog, *) 'qhat', qhat(i,k,m), 0.5_r8*qhatb(i,k)
-        !      write(iulog, *) 'qd', qd(i,k,m), 0.5_r8*qd(i,k,1)
-        !      write(iulog, *) 'qd', qd(i,k+1,m), 0.5_r8*qd(i,k+1,1)
-        !      write(iulog, *) 'emc',-Rc*cu(ideep(i),k)+Re*evp(ideep(i),k), 0.5_r8*(-cu(ideep(i),k)+evp(ideep(i),k)),Rc, Re
-        !      write(iulog, *) 'cu', cu(ideep(i),k)*0.5_r8, wtcu(ideep(i),k,m), wtcu(ideep(i),k,1)*0.5_r8
-        !      call endrun('dqdt error 1.1')
-        !    endif
-        !  endif
-        !  if (m .eq. 1) then
-        !   if (abs(dqdt(ideep(i),k,wtrc_iatype(m,iwtvap)) - dqdt(ideep(i),k,1)) .gt. 1e-24) then
-        !     write(iulog, *) 'dqdt error 1.1 m=1:', dqdt(ideep(i),k,wtrc_iatype(m,iwtvap)) , dqdt(ideep(i),k,1)
-        !     write(iulog, *) 'qu', qu(i,k+1,m), qub(i,k+1)
-        !     write(iulog, *)  'qhat', qhat(i,k+1,m), qhatb(i,k+1)
-        !     write(iulog, *) 'qu', qu(i,k,m), qub(i,k)
-        !     write(iulog, *) 'qhat', qhat(i,k,m), qhatb(i,k)
-        !     write(iulog, *) 'qd', qd(i,k,m), qdb(i,k)
-        !     write(iulog, *) 'qd', qd(i,k+1,m), qdb(i,k+1)
-        !     write(iulog, *) 'emc',-Rc*cu(ideep(i),k)+Re*evp(ideep(i),k), (-cu(ideep(i),k)+evp(ideep(i),k)),Rc, Re
-        !     write(iulog, *) 'cu', cu(ideep(i),k), wtcu(ideep(i),k,m), wtcu(ideep(i),k,1)*0.5_r8
-        !     call endrun('dqdt error 1.1 m=1')
-        !   endif
-        ! endif
 else
 dqdt(ideep(i),k,wtrc_iatype(m,iwtvap)) = emc !no mass fluxes can occur...
-!  if (m .eq. 2) then
-          !   if (abs(dqdt(ideep(i),k,wtrc_iatype(m,iwtvap)) - 0.5_r8*dqdt(ideep(i),k,1)) .gt. 1e-24) then
-          !     write(iulog, *) 'dqdt error 1.2:', dqdt(ideep(i),k,wtrc_iatype(m,iwtvap)) , 0.5_r8*dqdt(ideep(i),k,1)
-          !     call endrun('dqdt error 1.2')
-          !   endif
-          ! endif
 end if
 
 !calculate detrained condensate:
@@ -8236,12 +7833,6 @@ dqdt(ideep(i),k,wtrc_iatype(m,iwtvap)) = (1._r8/dsubcld(i))* &
 else if (k > mx(i)) then
 dqdt(ideep(i),k,wtrc_iatype(m,iwtvap)) = dqdt(ideep(i),k-1,wtrc_iatype(m,iwtvap))
 end if
-! if (m .eq. 2) then
-        !   if (abs(dqdt(ideep(i),k,wtrc_iatype(m,iwtvap)) - 0.5_r8*dqdt(ideep(i),k,1)) .gt. 1e-24) then
-        !     write(iulog, *) 'dqdt error 2:', dqdt(ideep(i),k,wtrc_iatype(m,iwtvap)) , 0.5_r8*dqdt(ideep(i),k,1)
-        !     call endrun('dqdt error 2')
-        !   endif
-        ! endif
 end do
 end do
 
@@ -8253,15 +7844,6 @@ end do  !Water tracers
 !******************
 
 end if !Lengath > 0
-
-! do k = 1,pver
-!   do i = 1, lengath
-!     if (abs(wtrprd(ideep(i),k,wtrc_iatype(2,iwtvap))- 0.5_r8*wtrprd(ideep(i),k,wtrc_iatype(1,iwtvap))) .gt. 1.e-24) then
-!       write(iulog, *) 'wtrprd error',wtrprd(ideep(i),k,wtrc_iatype(2,iwtvap)),wtrprd(ideep(i),k,wtrc_iatype(1,iwtvap))*0.5
-!       call endrun('wtrprd error')
-!   endif
-! enddo
-! enddo
 
 !*********************
 
@@ -8461,6 +8043,7 @@ end subroutine wtrc_q1q2_pjr_cam5
     integer                :: itype      ! water type index
 !-----------------------------------------------------------------------
     rat(:,:,:) = 0._r8
+
 
     ! Compute ratios based on total water set in the model. By definition,
     ! this should be the first water set.

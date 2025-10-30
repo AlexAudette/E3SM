@@ -63,7 +63,7 @@ contains
     !-----------------------------------------------------------------------
     ! Purpose: Initialize module internal data arrays
     !-----------------------------------------------------------------------
-    write(6,*) 'WTYPE_INIT: Initializing water types.'
+   !  write(6,*) 'WTYPE_INIT: Initializing water types.'
     return
   end subroutine wtype_init
 

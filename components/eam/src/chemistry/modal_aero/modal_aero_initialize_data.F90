@@ -1081,12 +1081,12 @@ loop:    do i = icldphy+1, pcnst
           end do   ! ll = 0, nspec_amode(m)
        end do   ! m = 1, ntot_amode
 
-       if ( masterproc ) then
-          write(*,'(/a)') 'l, cnst_name(l), cnst_name_cw(l)'
-          do l = 1, pcnst
-             write(*,'(i4,2(2x,a))') l, cnst_name(l), cnst_name_cw(l)
-          end do
-       end if
+      !  if ( masterproc ) then
+      !     write(*,'(/a)') 'l, cnst_name(l), cnst_name_cw(l)'
+      !     do l = 1, pcnst
+      !        write(*,'(i4,2(2x,a))') l, cnst_name(l), cnst_name_cw(l)
+      !     end do
+      !  end if
 
        return
      end subroutine initaermodes_set_cnstnamecw
