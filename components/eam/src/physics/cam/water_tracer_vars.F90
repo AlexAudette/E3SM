@@ -13,10 +13,10 @@ module water_tracer_vars
 
 !-----------------------------------------------------------------------
 
-  use shr_kind_mod,   only: r8 => shr_kind_r8
-  use constituents,   only: pcnst
+  use shr_kind_mod, only: r8 => shr_kind_r8
+  use constituents, only: pcnst
   use water_isotopes, only: pwtspec
-  use water_types,    only: pwtype
+  use water_types, only: pwtype
 
   implicit none
 
@@ -24,34 +24,33 @@ module water_tracer_vars
   save
 
 !------------------- Module Variable Declarations -----------------------
-integer, parameter, public    :: WTRC_MAX_CNST  = SET_WTRC_MAX_CNST   ! Maximum number of water tracers allowed
-integer, parameter, public    :: WTRC_WSET_STD  = 1     ! water set index for "regular" water
-
+  integer, parameter, public    :: WTRC_MAX_CNST = SET_WTRC_MAX_CNST   ! Maximum number of water tracers allowed
+  integer, parameter, public    :: WTRC_WSET_STD = 1     ! water set index for "regular" water
 
 ! Namelist variables
-  logical, public    :: trace_water               = .false.     ! set true to activate [off]
-  logical, public    :: wisotope                  = .false.     ! activate water isotopes [off]
+  logical, public    :: trace_water = .false.     ! set true to activate [off]
+  logical, public    :: wisotope = .false.     ! activate water isotopes [off]
 
-  logical, public    :: wtrc_lh2oadj              = .false.     ! adjust tracer H20 to Q
+  logical, public    :: wtrc_lh2oadj = .false.     ! adjust tracer H20 to Q
 !  logical, public    :: wtrc_lnomfix              = .true.      ! do not apply usual mass fixer (eul core)
-  logical, public    :: wtrc_lzmlin               = .true.      ! linear interpolation for zm midpoints (else log)
+  logical, public    :: wtrc_lzmlin = .true.      ! linear interpolation for zm midpoints (else log)
 !  logical, public    :: wtrc_cldw_adv             = .false.     ! true for advected, false for non-advected
-  logical, public    :: wtrc_warn_only            = .true.      ! true for message only, no endrun
-  logical, public    :: wtrc_add_cvprecip         = .false.     ! true to add QRAINC and QSNOWC, if not done by microphysics
-  logical, public    :: wtrc_add_stprecip         = .false.     ! true to add QRAINS and QSNOWS, if not done by microphysics
-  logical, public    :: wtrc_alpha_kinetic        = .false.     ! include kinetic effects in fractionation
-  logical, public    :: wtrc_check_total_h2o      = .false.     ! check total mass conservation
-  logical, public    :: wtrc_check_show_types     = .false.     ! check total mass conservation
-  logical, public    :: wtrc_detrain_in_macrop    = .false.     ! do detrainment of isotopes in macrop (approx only)
-  logical, public    :: wtrc_use_ice_supsat       = .false.     ! use model-derived ice supersaturation?
+  logical, public    :: wtrc_warn_only = .true.      ! true for message only, no endrun
+  logical, public    :: wtrc_add_cvprecip = .false.     ! true to add QRAINC and QSNOWC, if not done by microphysics
+  logical, public    :: wtrc_add_stprecip = .false.     ! true to add QRAINS and QSNOWS, if not done by microphysics
+  logical, public    :: wtrc_alpha_kinetic = .false.     ! include kinetic effects in fractionation
+  logical, public    :: wtrc_check_total_h2o = .false.     ! check total mass conservation
+  logical, public    :: wtrc_check_show_types = .false.     ! check total mass conservation
+  logical, public    :: wtrc_detrain_in_macrop = .false.     ! do detrainment of isotopes in macrop (approx only)
+  logical, public    :: wtrc_use_ice_supsat = .false.     ! use model-derived ice supersaturation?
 
 !
-  integer, public    :: wtrc_niter                = 10          ! number of iterations to use when applying process rates
-  integer, public    :: wtrc_citer                = 20          ! number of iterations in dicm (10 < nitr < 1000)
-  real(r8), public   :: wtrc_qchkmin              = 1.e-14_r8   ! minimum relative difference to trigger check failure
-  real(r8), public   :: wtrc_qmin                 = 1.e-18_r8   ! smalles support mixing ratio (matches qsmall in MG microphysics)
+  integer, public    :: wtrc_niter = 10          ! number of iterations to use when applying process rates
+  integer, public    :: wtrc_citer = 20          ! number of iterations in dicm (10 < nitr < 1000)
+  real(r8), public   :: wtrc_qchkmin = 1.e-14_r8   ! minimum relative difference to trigger check failure
+  real(r8), public   :: wtrc_qmin = 1.e-18_r8   ! smalles support mixing ratio (matches qsmall in MG microphysics)
   real(r8), public   :: wtrc_fixed_alpha(pwtspec) = 1._r8       ! default standard fractionation factor, used when wisotope is false
-  ! real(r8), public   :: wtrc_fixed_rstd(pwtspec)  = 1._r8       ! default standard isotope ratio, used when wisotope is false
+  real(r8), public   :: wtrc_fixed_rstd(pwtspec) = 1._r8       ! default standard isotope ratio, used when wisotope is false
 
   character(len=32), public      :: water_tracer_model = "none"
 
@@ -60,23 +59,25 @@ integer, parameter, public    :: WTRC_WSET_STD  = 1     ! water set index for "r
 ! of WTRC_MAX_CNST tracers can be defined.
 !
 ! Tracer names, no more than 5 characters for history files
-  character(len=8), dimension(WTRC_MAX_CNST), public  :: wtrc_names  = ""  !Made public in order to generate output
-  character(len=8), dimension(WTRC_MAX_CNST), public  :: wtrc_species_names  = ""
-  character(len=8), dimension(WTRC_MAX_CNST), public  :: wtrc_type_names     = ""
-  character(len=8), dimension(WTRC_MAX_CNST), public  :: wtrc_srfvap_names   = ""
-  character(len=8), dimension(WTRC_MAX_CNST), public  :: wtrc_srfpcp_names   = ""
-  character(len=8), dimension(WTRC_MAX_CNST), public  :: wtrc_tag_names      = ""
+  character(len=8), dimension(WTRC_MAX_CNST), public  :: wtrc_names = ""  !Made public in order to generate output
+  character(len=8), dimension(WTRC_MAX_CNST), public  :: wtrc_in_names = ""
+  character(len=8), dimension(WTRC_MAX_CNST), public  :: wtrc_species_names = "H2O"
+  character(len=8), dimension(WTRC_MAX_CNST), public  :: wtrc_type_names = ""
+  character(len=8), dimension(WTRC_MAX_CNST), public  :: wtrc_srfvap_names = ""
+  character(len=8), dimension(WTRC_MAX_CNST), public  :: wtrc_srfpcp_names = ""
+  character(len=8), dimension(WTRC_MAX_CNST), public  :: wtrc_tag_names = ""
 
-  character(len=8), dimension(WTRC_MAX_CNST), public  :: wtrc_out_names      = ""
-
+  character(len=8), dimension(WTRC_MAX_CNST), public  :: wtrc_out_names = ""
+  character(len=8), dimension(pwtype), public  :: type_names_no_isotopes = (/ 'VAPOR', 'LIQUID', 'ICE', 'RAINS', 'SNOWS', 'RAINC', 'SNOWC' /)
 !
 ! Constituent names, for the bulk (non-isotopic) water
   character(len=8), dimension(pwtype), parameter, public :: & ! constituent names
-      wtrc_bulk_names =   (/ 'Q       ', 'CLDLIQ  ', 'CLDICE  ', 'RAINQM  ', 'SNOWQM  ', 'RAINQC  ', 'SNOWQC  ' /)
+    wtrc_bulk_names = (/'Q       ', 'CLDLIQ  ', 'CLDICE  ', 'RAINQM  ', 'SNOWQM  ', 'RAINQC  ', 'SNOWQC  '/)
+  character(len=1), dimension(pwtype), parameter, public :: & ! abbreviations for water types
+    wtrc_type_abrv = (/'V', 'L', 'I', 'R', 'S', 'r', 's'/)
 !
 ! Constituent indices for the bulk (non-isotopic) water
   integer, public   :: wtrc_bulk_indices(pwtype)
-
 
 ! These are derived off of the fields provided in the namelist files.
 !
@@ -99,8 +100,8 @@ integer, parameter, public    :: WTRC_WSET_STD  = 1     ! water set index for "r
 
 ! Sort by Tracer water sets (groups of all water types for the same species)
   integer, public :: wtrc_nwset                                    ! number of each water set
-  integer, public :: wtrc_iawset(pwtype, WTRC_MAX_CNST / pwtype)   ! index arrays for the water sets
-  integer, public :: wtrc_srfpcp_indices(pwtype, WTRC_MAX_CNST / pwtype)  ! pbuf index arrays for surface precipitation tracers
+  integer, public :: wtrc_iawset(pwtype, WTRC_MAX_CNST/pwtype)   ! index arrays for the water sets
+  integer, public :: wtrc_srfpcp_indices(pwtype, WTRC_MAX_CNST/pwtype)  ! pbuf index arrays for surface precipitation tracers
 
 ! Surface fields for coupling to surface models.
   integer, public :: wtrc_nsrfvap                       ! number of surface water vapor tracers

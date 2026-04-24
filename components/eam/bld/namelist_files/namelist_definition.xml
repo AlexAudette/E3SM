@@ -4185,7 +4185,7 @@ that are used in the model. When set to none, no water tracers are
 Default: Set by configure
 </entry>
 
-<entry id="wtrc_names" type="char*8(5000)"  category="water_tracers"
+<entry id="wtrc_in_names" type="char*8(5000)"  category="water_tracers"
        group="water_tracer_nl" valid_values="" >
 A list of the names of the constituents that will be created for the
 water tracers. The names must be 5 characters or less and can not duplicate
@@ -4376,7 +4376,7 @@ Default: 1.0
 <entry id="wtrc_fixed_rstd" type="real(100)"  category="water_tracers"
        group="water_tracer_nl" valid_values="">
 The isotope ratio to be used when wisotope is false. This is used for
-test pruposes.
+test purposes.
 Default: 1.0
 </entry>
 

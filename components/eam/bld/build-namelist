@@ -3971,21 +3971,21 @@ if ($water_tracer ne 'none') {
      }
   }
   # Strip off last comma from the list
-  $wtrc_srfvap_names_list = substr($wtrc_srfvap_names_list, 0, -1);
-  add_default($nl, 'wtrc_srfvap_names', 'val'=>$wtrc_srfvap_names_list);
-  print "======= $wtrc_srfvap_names_list \n";
+#   $wtrc_srfvap_names_list = substr($wtrc_srfvap_names_list, 0, -1);
+#   add_default($nl, 'wtrc_srfvap_names', 'val'=>$wtrc_srfvap_names_list);
+#   print "======= $wtrc_srfvap_names_list \n";
 
   # Tracer names, no more than 5 characters per name
-  add_default($nl, 'wtrc_names',   'val'=>$wtrc_name);
+  add_default($nl, 'wtrc_in_names',   'val'=>$wtrc_name);
 
   # Tracer isotopic species (see water_isotopes.F90)
-  add_default($nl, 'wtrc_species_names',  'val'=>$wtrc_spec);
+#   add_default($nl, 'wtrc_species_names',  'val'=>$wtrc_spec);
 
   # Tracer types (see water_types.F90)
-  add_default($nl, 'wtrc_type_names',    'val'=>$wtrc_type);
+#   add_default($nl, 'wtrc_type_names',    'val'=>$wtrc_type);
 
   # Tracers that precipitate to surface (see water_types.F90)
-  add_default($nl, 'wtrc_srfpcp_names', 'val'=>$wtrc_srfpcp);
+#   add_default($nl, 'wtrc_srfpcp_names', 'val'=>$wtrc_srfpcp);
 
 }
 
