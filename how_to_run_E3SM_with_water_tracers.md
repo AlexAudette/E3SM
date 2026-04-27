@@ -55,8 +55,6 @@ The `setup_sim.py` script is a Python tool that automates all water tracer confi
 git clone https://github.com/AlexAudette/iE3SM_utils.git
 ```
 
-It should be ran form within the `iE3SM_utils/` directory — it writes directly into `$CASEDIR`, which is passed as a command-line argument.
-
 The `iE3SM_utils/` directory contains the Python tooling that automates all water tracer configuration. It should be ran form within the `iE3SM_utils/` directory — it writes directly into `$CASEDIR`, which is passed as a command-line argument.
 
 #### What it does
@@ -77,8 +75,10 @@ iE3SM_utils/                          ← run scripts from here
 ├── namelist.py
 ├── f90_patch.py
 ├── xml_config.py
-├── tracer_configuration.json       ← edit this to define your tracers
+├── tracer_config/
+    └──tracer_configuration.json       ← edit this to define your tracers
 └── run_config.json                 ← edit this to set run length, wallclock, etc.
+
 
 $CASEDIR/                           ← files will be written here
 ├── SourceMods/
@@ -91,7 +91,7 @@ $CASEDIR/                           ← files will be written here
 
 Before running, review and edit the two JSON files:
 
-**`tracer_configuration.json`** — defines the water tracer regions. `H2O` must always be the first entry. Add or modify regional tags (e.g. `ARC`, `ROW`) with their latitude/longitude bounds and isotope ratios. Here are examples for the two tracers describing the moisture evaporated from the Arctic and from the rest of the world:
+**`tracer_config/tracer_configuration.json`** — defines the water tracer regions. `H2O` must always be the first entry. Add or modify regional tags (e.g. `ARC`, `ROW`) with their latitude/longitude bounds and isotope ratios. Here are examples for the two tracers describing the moisture evaporated from the Arctic and from the rest of the world:
 
 ```json
 {
@@ -127,11 +127,13 @@ Before running, review and edit the two JSON files:
 
 #### Configure the water tracer files
 
-From the `iE3SM_utils/` directory, pass `$CASEDIR` as an argument:
+From the `iE3SM_utils/` directory, pass `$CASEDIR` and the tracer_configuration as arguments::
 
 ```bash
-python setup_sim.py $CASEDIR
+python setup_sim.py $CASEDIR <tracer_configuration>
 ```
+
+The tracer configuration is a JSON file that defines the water tracer regions, withouth the `.json` extension.
 
 The script will print a confirmation line for each step as it completes:
 

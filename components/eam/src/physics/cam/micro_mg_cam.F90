@@ -613,7 +613,7 @@ contains
     use micro_mg_utils, only: micro_mg_utils_init
     use micro_mg1_0, only: micro_mg_init1_0 => micro_mg_init
     use micro_mg1_5, only: micro_mg_init1_5 => micro_mg_init
-    use micro_mg2_0_tags, only: micro_mg_init2_0 => micro_mg_init
+    use micro_mg2_0, only: micro_mg_init2_0 => micro_mg_init
 
     !-----------------------------------------------------------------------
     !

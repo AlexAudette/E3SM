@@ -26,3 +26,6 @@ buildlib_cmakec
 
 # Ignore emacs backup files
 *~
+
+# Ignore vscode files
+.vscode
